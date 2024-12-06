@@ -18,10 +18,10 @@ SSD1306 OLED Display / SH1106 OLED Display
 Mean Well RD-65a
 Phillips HID- PV C 70
 
-Data Structure
-├── main                  # Main entry point
-├── config                # Configuration file for schedules and thresholds
-├── requirements.txt      # Dependencies
+Data Structure <br />
+├── main                  # Main entry point <br />
+├── config                # Configuration file for schedules and thresholds <br />
+├── requirements.txt      # Dependencies <br />
 ├── /modules              # Custom hardware interface modules
 │   ├── get_data          # Read all Sensors
 │   ├── light_control     # Control of UV1, UV2 and heatspot
