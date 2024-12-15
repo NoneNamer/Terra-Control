@@ -1,0 +1,10 @@
+[package]
+name = "terrarium_controller"
+version = "0.1.0"
+authors = ["Michael Schnieders"]
+
+[dependencies]
+rppal = "0.13"
+toml = "0.5"
+log = "0.4"
+simplelog = "0.11"

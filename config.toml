@@ -1,0 +1,8 @@
+[main]
+fixed_mode=false
+
+[pin_config]
+ds18b20_bus = 4
+dht22 = 17
+veml6075_uv1 = 27
+veml6075_uv2 = 22

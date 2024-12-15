@@ -1,10 +1,14 @@
 mod modules;
-
 use tokio::task;
 use std::sync::{Arc, Mutex};
+use modules::config::Config;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
+
+    // Load the configuration from the config.toml file
+    let config = Config::load()?;
+    println!("{:?}", config); // Debugging: Print the loaded config
 
     // Start the web server
     let web_handle = {
@@ -15,5 +19,6 @@ async fn main() {
     };
 
     // Wait for tasks to finish
-    let _ = tokio::join!(web_handle, sensor_handle, logger_handle);
+    let _ = tokio::join!(config, web_handle);
 }
+

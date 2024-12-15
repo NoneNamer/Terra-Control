@@ -1,4 +1,5 @@
 Terrarium Controller <br />
+WIP <br />
 
 Main Functions <br />
 1. UV, LED and heating control on a configurable Timer <br />
@@ -19,22 +20,23 @@ Mean Well RD-65a <br />
 Phillips HID- PV C 70 <br />
 
 Data Structure <br />
-├── main 					# Main entry point <br />
-├── config 					# Configuration file for base schedules and thresholds <br />
-├── requirements.txt 		# Dependencies <br />
-├── /modules 				# Custom hardware interface modules <br />
-│   ├── mod.rs 				# Modules entry point <br />
-│   ├── getData 			# Read all Sensors <br />
-│   ├── lightControl 		# Control of UV1, UV2 and heatspot <br />
-│   ├── ledStrip 			# Control of LED lighting <br />
-│   ├── display 			# Display <br />
-│   ├── web 				# Webserver handling user input and serve data <br />
-│   └── cam 				# Camera handling <br />
-├── /logs 					# Logs <br />
-│   ├── terra-sys.log 		# Log <br />
-│   └── terra-temp.log 		# Seperate logfile for overheat <br />
-└── /static					# Web assets <br />
+├── main.rs             # Main entry point <br />
+├── config.toml         # Configuration file <br />
+├── Cargo.toml          # Project dependencies / config <br />
+├── /modules            # Modules <br />
+│   ├── mod.rs          # Entry point for modules <br />
+│   ├── config.rs       # Handles loading from config.toml <br />
+│   ├── getData.rs      # Sensor reading logic <br />
+│   ├── lightControl.rs # UV and heatspot control <br />
+│   ├── ledStrip.rs     # LED lighting control <br />
+│   ├── display.rs      # Display control <br />
+│   ├── web.rs          # Web server logic <br />
+│   └── cam.rs          # Camera handling logic <br />
+├── /logs               # Log files directory <br />
+│   ├── terra-sys.log <br />
+│   └── terra-temp.log <br />
+└── /static             # Web assets <br />
     ├── index.html <br />
     ├── schedule.html <br />
-    ├──	data.html <br />
+    ├── data.html <br />
     └── cam.html <br />
