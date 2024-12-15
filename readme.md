@@ -20,7 +20,7 @@ Phillips HID- PV C 70 <br />
 
 Data Structure <br />
 ├── main 					# Main entry point <br />
-├── config 					# Configuration file for schedules and thresholds <br />
+├── config 					# Configuration file for base schedules and thresholds <br />
 ├── requirements.txt 		# Dependencies <br />
 ├── /modules 				# Custom hardware interface modules <br />
 │   ├── mod.rs 				# Modules entry point <br />
