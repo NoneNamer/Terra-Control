@@ -19,16 +19,22 @@ Mean Well RD-65a <br />
 Phillips HID- PV C 70 <br />
 
 Data Structure <br />
-├── main                  # Main entry point <br />
-├── config                # Configuration file for schedules and thresholds <br />
-├── requirements.txt      # Dependencies <br />
-├── /modules              # Custom hardware interface modules <br />
-│   ├── get_data          # Read all Sensors <br />
-│   ├── light_control     # Control of UV1, UV2 and heatspot <br />
-│   ├── led_strip         # Control of LED lighting <br />
-│   ├── oled_display      # Display <br />
-│   └── web_server        # Webserver handling user input and serve data <br />
-├── /logs                 # Logs <br />
-│   ├── terra-sys.log     # Log <br />
-│   └── terra-temp.log    # Seperate logfile for overheat <br />
-└── /static               # Web assets (HTML, CSS, JS) <br />
+├── main 					# Main entry point <br />
+├── config 					# Configuration file for schedules and thresholds <br />
+├── requirements.txt 		# Dependencies <br />
+├── /modules 				# Custom hardware interface modules <br />
+│   ├── mod.rs 				# Modules entry point <br />
+│   ├── getData 			# Read all Sensors <br />
+│   ├── lightControl 		# Control of UV1, UV2 and heatspot <br />
+│   ├── ledStrip 			# Control of LED lighting <br />
+│   ├── display 			# Display <br />
+│   ├── web 				# Webserver handling user input and serve data <br />
+│   └── cam 				# Camera handling <br />
+├── /logs 					# Logs <br />
+│   ├── terra-sys.log 		# Log <br />
+│   └── terra-temp.log 		# Seperate logfile for overheat <br />
+└── /static					# Web assets <br />
+    ├── index.html <br />
+    ├── schedule.html <br />
+    ├──	data.html <br />
+    └── cam.html <br />
