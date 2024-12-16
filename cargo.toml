@@ -4,7 +4,8 @@ version = "0.1.0"
 authors = ["Michael Schnieders"]
 
 [dependencies]
-rppal = "0.13"
 toml = "0.5"
 log = "0.4"
 simplelog = "0.11"
+rppal = "0.13"
+dht-sensor = "0.5"
