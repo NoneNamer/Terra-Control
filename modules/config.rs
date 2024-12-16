@@ -2,6 +2,7 @@
 use std::fs;
 use std::error::Error;
 use toml;
+use chrono::NaiveTime;
 
 //top level config struct
 #[derive(Debug, Deserialize)]

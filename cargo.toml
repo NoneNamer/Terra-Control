@@ -4,8 +4,10 @@ version = "0.1.0"
 authors = ["Michael Schnieders"]
 
 [dependencies]
-toml = "0.5"
-log = "0.4"
-simplelog = "0.11"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+toml = "0.7"
 rppal = "0.13"
 dht-sensor = "0.5"
+rusqlite = "0.29.0"
