@@ -1,8 +1,21 @@
 [main]
-fixed_mode=false
+fixed_mode = false
 
-[pin_config]
-ds18b20_bus = 4
-dht22 = 17
-veml6075_uv1 = 27
-veml6075_uv2 = 22
+[get_data]
+ds18b20_bus = 
+dht22 = 
+veml6075_uv1 = 
+veml6075_uv2 = 
+
+[light_control]
+uv_relay1 = 
+uv_relay2 = 
+heat_relay = 
+
+[led]
+
+[display]
+
+[web]
+
+[cam]
