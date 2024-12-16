@@ -19,3 +19,16 @@ heat_relay =
 [web]
 
 [cam]
+
+[db]
+def_uv1_start = "06:30"
+def_uv1_end = "19:00"
+def_uv2_start = "07:00"
+def_uv2_end = "19:30"
+def_heat_start = "10:00"
+def_heat_end = "14:30"
+def_led_R = 150
+def_led_G = 150
+def_led_B = 128
+def_led_WW = 128
+def_led_CW = 128
