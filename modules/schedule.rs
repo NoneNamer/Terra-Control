@@ -35,7 +35,7 @@ fn create_schedule_db(db_path: &str, config: &ScheduleConfig) -> Result<()> {
             led_r INTEGER NOT NULL,
             led_g INTEGER NOT NULL,
             led_b INTEGER NOT NULL,
-            led_w INTEGER NOT NULL,
+            led_cw INTEGER NOT NULL,
             led_ww INTEGER NOT NULL
         )",
         [],
@@ -45,7 +45,7 @@ fn create_schedule_db(db_path: &str, config: &ScheduleConfig) -> Result<()> {
     let mut stmt = conn.prepare(
         "INSERT INTO schedule (
             week_number, uv1_start, uv1_end, uv2_start, uv2_end,
-            heat_start, heat_end, led_r, led_g, led_b, led_w, led_ww
+            heat_start, heat_end, led_r, led_g, led_b, led_cw, led_ww
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
     )?;
 

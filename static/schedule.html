@@ -16,15 +16,15 @@
             <a href="cam.html">Camera</a>
         </nav><hr>
         <h2>Weekly Lighting Settings</h2>
-        <form id="weeklySettingsForm">
+        <form id="weeklySettingsForm" method="POST" action="/schedule">
             <div class="weeks-container">
                 <!-- Weekly settings will be dynamically populated with JavaScript -->
             </div>
+            <input type="submit" value="Submit">
         </form>
     </div>
 
     <script>
-        // Populate weekly settings form dynamically
         const weeksContainer = document.querySelector('.weeks-container');
         for (let week = 1; week <= 52; week++) {
             const weekHtml = `
@@ -32,61 +32,54 @@
                     <div class="week-settings">
                         <h3>KW ${week}</h3>
                         <div class="input-group">
-                            <label for="uv1Start${week}">UV1 Start Hour:</label>
-                            <input type='number' id="uv1Start${week}" name='uv1Start${week}' min='0' max='23' value='6'>
+                            <label for="uv1Start${week}">UV1 Start Time:</label>
+                            <input type="time" id="uv1Start${week}" name="uv1Start${week}" value="06:00">
                         </div>
                         <div class="input-group">
-                            <label for="uv1End${week}">UV1 End Hour:</label>
-                            <input type='number' id="uv1End${week}" name='uv1End${week}' min='0' max='23' value='18'>
+                            <label for="uv1End${week}">UV1 End Time:</label>
+                            <input type="time" id="uv1End${week}" name="uv1End${week}" value="18:00">
                         </div>
                         <div class="input-group">
-                            <label for="uv2Start${week}">UV2 Start Hour:</label>
-                            <input type='number' id="uv2Start${week}" name='uv2Start${week}' min='0' max='23' value='8'>
+                            <label for="uv2Start${week}">UV2 Start Time:</label>
+                            <input type="time" id="uv2Start${week}" name="uv2Start${week}" value="08:00">
                         </div>
                         <div class="input-group">
-                            <label for="uv2End${week}">UV2 End Hour:</label>
-                            <input type='number' id="uv2End${week}" name='uv2End${week}' min='0' max='23' value='20'>
+                            <label for="uv2End${week}">UV2 End Time:</label>
+                            <input type="time" id="uv2End${week}" name="uv2End${week}" value="20:00">
                         </div>
                         <div class="input-group">
-                            <label for="heatStart${week}">Heat Start Hour:</label>
-                            <input type='number' id="heatStart${week}" name='heatStart${week}' min='0' max='23' value='8'>
+                            <label for="heatStart${week}">Heat Start Time:</label>
+                            <input type="time" id="heatStart${week}" name="heatStart${week}" value="08:00">
                         </div>
                         <div class="input-group">
-                            <label for="heatEnd${week}">Heat End Hour:</label>
-                            <input type='number' id="heatEnd${week}" name='heatEnd${week}' min='0' max='23' value='20'>
+                            <label for="heatEnd${week}">Heat End Time:</label>
+                            <input type="time" id="heatEnd${week}" name="heatEnd${week}" value="20:00">
                         </div>
                         <div class="input-group">
                             <label for="red${week}">Red:</label>
-                            <input type='number' id="red${week}" name='red${week}' min='0' max='255' value='255'>
+                            <input type="number" id="red${week}" name="red${week}" min="0" max="255" value="255">
                         </div>
                         <div class="input-group">
                             <label for="green${week}">Green:</label>
-                            <input type='number' id="green${week}" name='green${week}' min='0' max='255' value='200'>
+                            <input type="number" id="green${week}" name="green${week}" min="0" max="255" value="200">
                         </div>
                         <div class="input-group">
                             <label for="blue${week}">Blue:</label>
-                            <input type='number' id="blue${week}" name='blue${week}' min='0' max='255' value='100'>
+                            <input type="number" id="blue${week}" name="blue${week}" min="0" max="255" value="100">
+                        </div>
+                        <div class="input-group">
+                            <label for="cw${week}">Cool White:</label>
+                            <input type="number" id="cw${week}" name="cw${week}" min="0" max="255" value="150">
+                        </div>
+                        <div class="input-group">
+                            <label for="ww${week}">Warm White:</label>
+                            <input type="number" id="ww${week}" name="ww${week}" min="0" max="255" value="200">
                         </div>
                     </div>
                 </div>
             `;
             weeksContainer.insertAdjacentHTML('beforeend', weekHtml);
         }
-        weeksContainer.insertAdjacentHTML('afterend', '<input type="submit" value="Submit">');
-
-        // Handle form submission
-        const weeklySettingsForm = document.getElementById('weeklySettingsForm');
-        weeklySettingsForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const formData = new FormData(weeklySettingsForm);
-            const settings = {};
-
-            for (let [key, value] of formData.entries()) {
-                settings[key] = value;
-            }
-
-            console.log('Weekly settings submitted:', settings);
-        });
     </script>
 </body>
 </html>
