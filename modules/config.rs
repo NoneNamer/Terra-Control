@@ -10,6 +10,7 @@ pub struct Config {
     pub main: MainConfig,
     pub get_data: GetDataConfig,
     pub db: ScheduleConfig,
+    pub web: WebConfig, 
 }
 
 //main config struct
@@ -24,6 +25,12 @@ pub struct GetDataConfig {
     pub dht22: u8,
     pub veml6075_uv1: u8,
     pub veml6075_uv2: u8,
+}
+// web config struct
+#[derive(Debug, Deserialize)]
+pub struct WebConfig {
+    pub address: String,    // Web server address (e.g., "127.0.0.1")
+    pub port: u16,          // Web server port (e.g., 8080)
 }
 //schedule struct
 #[derive(Debug, Deserialize)]
@@ -47,6 +54,7 @@ impl Config {
         self.main.validate()?;
         self.get_data.validate()?;
         self.db.validate()?;
+        self.web.validate()?;
         Ok(())
     }
 }
@@ -113,6 +121,22 @@ impl ScheduleConfig {
     chrono::NaiveTime::parse_from_str(time, "%H:%M").map_err(|_| 
         ConfigError::ValidationError("Invalid time format".to_string()))?;
     Ok(())
+    }
+}
+
+impl WebConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        // Ensure that the address is non-empty
+        if self.address.is_empty() {
+            return Err("Web server address cannot be empty".to_string());
+        }
+
+        // Ensure the port is within valid range
+        if self.port == 0 || self.port > 65535 {
+            return Err("Invalid port number".to_string());
+        }
+
+        Ok(())
     }
 }
 
