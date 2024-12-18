@@ -26,6 +26,15 @@ pub struct GetDataConfig {
     pub veml6075_uv1: u8,
     pub veml6075_uv2: u8,
 }
+//lightControl struct
+#[derive(Deserialize)]
+pub struct LightControlConfig {
+    pub uv_relay1: u8,
+    pub uv_relay2: u8,
+    pub heat_relay: u8,
+    pub overheat_temp: u8,
+    pub overheat_time: u64, // Time in seconds
+}
 // web config struct
 #[derive(Debug, Deserialize)]
 pub struct WebConfig {
@@ -55,6 +64,7 @@ impl Config {
         self.get_data.validate()?;
         self.db.validate()?;
         self.web.validate()?;
+        self.light_control.validate()?;
         Ok(())
     }
 }
@@ -68,20 +78,53 @@ impl MainConfig {
 
 impl GetDataConfig {
     pub fn validate(&self) -> Result<(), String> {
-        // Ensure all pins are non-zero (or use another logic as per your requirements)
-        if self.ds18b20_bus == 0 {
-            return Err("Missing / invalid value in get_data: ds18b20_bus".to_string());
+        // Validate GPIO pins
+        if !(0..=27).contains(&self.ds18b20_bus) {
+            return Err(format!("Invalid GPIO number for ds18b20_bus: {}", self.ds18b20_bus));
         }
-        if self.dht22 == 0 {
-            return Err("Missing / invalid value in get_data: dht22".to_string());
+        if !(0..=27).contains(&self.dht22) {
+            return Err(format!("Invalid GPIO number for dht22: {}", self.dht22));
         }
-        if self.veml6075_uv1 == 0 {
-            return Err("Missing / invalid value in get_data: veml6075_uv1".to_string());
+        if !(0..=27).contains(&self.veml6075_uv1) {
+            return Err(format!("Invalid GPIO number for veml6075_uv1: {}", self.veml6075_uv1));
         }
-        if self.veml6075_uv2 == 0 {
-            return Err("Missing / invalid value in get_data: veml6075_uv2".to_string());
+        if !(0..=27).contains(&self.veml6075_uv2) {
+            return Err(format!("Invalid GPIO number for veml6075_uv2: {}", self.veml6075_uv2));
         }
         Ok(())
+    }
+}
+
+impl LightControlConfig {
+    pub fn validate(&self) -> Result<(), String> {
+            // Validate GPIO pin numbers (assume valid range is 0-27 for Raspberry Pi GPIOs)
+            if !(0..=27).contains(&self.uv_relay1) {
+                return Err(format!("Invalid GPIO number for uv_relay1: {}", self.uv_relay1));
+            }
+            if !(0..=27).contains(&self.uv_relay2) {
+                return Err(format!("Invalid GPIO number for uv_relay2: {}", self.uv_relay2));
+            }
+            if !(0..=27).contains(&self.heat_relay) {
+                return Err(format!("Invalid GPIO number for heat_relay: {}", self.heat_relay));
+            }
+
+            // Validate overheat_temp (0-60 °C)
+            if !(0..=60).contains(&self.overheat_temp) {
+                return Err(format!(
+                    "Invalid overheat_temp: {}. Must be in the range 0-60°C.",
+                    self.overheat_temp
+                ));
+            }
+
+            // Validate overheat_time (minimum 15 minutes = 900 seconds)
+            if self.overheat_time < 900 {
+                return Err(format!(
+                    "Invalid overheat_time: {} seconds. Must be at least 900 seconds (15 minutes).",
+                    self.overheat_time
+                ));
+            }
+
+            Ok(())
     }
 }
 

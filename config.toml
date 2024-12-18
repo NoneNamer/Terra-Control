@@ -11,6 +11,8 @@ veml6075_uv2 =
 uv_relay1 = 
 uv_relay2 = 
 heat_relay = 
+overheat_temp =
+overheat_time = 
 
 [led]
 
