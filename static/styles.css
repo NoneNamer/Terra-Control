@@ -79,6 +79,7 @@ input[type=submit]:hover {
 .graph-container {
     display: flex;
     justify-content: space-between;
+    overflow-x: auto;
     margin-top: 20px;
 }
 
