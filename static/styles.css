@@ -75,16 +75,17 @@ input[type=submit]:hover {
     background-color: #555; 
 }
 
-/* Graph container styles (used in index) */
 .graph-container {
     display: flex;
     justify-content: space-between;
+    flex-wrap: wrap;
     margin-top: 20px;
 }
 
 .graph-box {
     display: flex;
     width: 48%;
+    min-width: 300px;
 }
 
 /* Canvas element styles (used in TC - Data) */
@@ -124,3 +125,10 @@ hr {
     margin: 20px 0;
     border-color: #666;
 }
+
+/* Add a media query for smaller screens */
+@media (max-width: 600px) { 
+    .graph-box {
+        width: 100%;
+        margin-bottom: 20px;
+    }
