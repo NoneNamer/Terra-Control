@@ -44,7 +44,7 @@ nav a {
     text-align: right;
 }
 
-/* Number input styles (used in TC - Weekly Settings, TC - Data) */
+/* Number input styles (used in schedule, data) */
 input[type=number] { 
     flex: 0 0 auto;
     padding: 5px; 
@@ -56,12 +56,12 @@ input[type=number] {
     text-align: center;
 }
 
-/* Checkbox input styles (used in TC - Data) */
+/* Checkbox input styles (used in data) */
 input[type=checkbox] { 
     margin: 5px; 
 }
 
-/* Submit button styles (used across all pages) */
+/* Submit button styles (used in index, schedule) */
 input[type=submit] { 
     padding: 10px 20px; 
     background-color: #888; 
@@ -75,17 +75,16 @@ input[type=submit]:hover {
     background-color: #555; 
 }
 
-/* Graph container styles (used in TC - Data) */
+/* Graph container styles (used in index) */
 .graph-container {
     display: flex;
     justify-content: space-between;
-    overflow-x: auto;
     margin-top: 20px;
 }
 
 .graph-box {
+    display: flex;
     width: 48%;
-    height: 300px;
 }
 
 /* Canvas element styles (used in TC - Data) */
@@ -102,7 +101,7 @@ canvas {
 }
 
 .week-row {
-    width: 48%; /* Slightly less than 50% to allow for spacing */
+    width: 250px; /* Slightly less than 50% to allow for spacing */
     margin-bottom: 20px;
 }
 
