@@ -10,7 +10,6 @@ serde = { version = "1.0", features = ["derive"] }								#
 chrono = { version = "0.4", features = ["serde"] }								#
 toml = "0.7"																	# 
 axum = "0.6"                                  									# Web framework
-sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio-native-tls"] } # SQLite database
 tower = "0.4"                                 									# Middleware and routing
 rppal = "0.13"																	# GPIO
 dht-sensor = "0.2.1"															#
