@@ -10,7 +10,7 @@ use rusqlite::{params, Connection, Result};
 
 //gpio logic with overheat protection
 impl LightController {
-    fn new(config: LightControlConfig) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(config: LightControlConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let gpio = Gpio::new()?;
         Ok(LightController {
             uv1: gpio.get(config.uv_relay1)?.into_output(),
@@ -22,7 +22,7 @@ impl LightController {
         })
     }
 
-    fn set_uv1(&mut self, state: bool) {
+    pub fn set_uv1(&mut self, state: bool) {
         if state {
             self.uv1.set_high();
         } else {
@@ -30,7 +30,7 @@ impl LightController {
         }
     }
 
-    fn set_uv2(&mut self, state: bool) {
+    pub fn set_uv2(&mut self, state: bool) {
         if state {
             self.uv2.set_high();
         } else {
@@ -38,7 +38,7 @@ impl LightController {
         }
     }
 
-    fn control_heat(&mut self, state: bool) {
+    pub fn control_heat(&mut self, state: bool) {
         let current_temp = get_current_temperature();
         if current_temp >= self.overheat_temp {
             self.set_heat(false);
