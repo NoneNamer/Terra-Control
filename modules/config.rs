@@ -8,39 +8,46 @@ use chrono::NaiveTime;
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub main: MainConfig,
-    pub get_data: GetDataConfig,
+    pub gpio: GpioConfig,
     pub db: ScheduleConfig,
     pub web: WebConfig, 
+    pub light: LightControlConfig,
 }
 
 //main config struct
 #[derive(Debug, Deserialize)]
 pub struct MainConfig {
-    pub fixed_mode: bool,
+    pub debug: bool,
 }
-//getData struct
+
+//GPIO struct
 #[derive(Debug, Deserialize)]
-pub struct GetDataConfig {
+pub struct GpioConfig {
+    pub uv_relay1: u8,
+    pub uv_relay2: u8,
+    pub heat_relay: u8,
+    pub led_relay: u8,
+    pub ic_count: u16,
     pub ds18b20_bus: u8,
     pub dht22: u8,
     pub veml6075_uv1: u8,
     pub veml6075_uv2: u8,
 }
+
 //lightControl struct
 #[derive(Deserialize)]
 pub struct LightControlConfig {
-    pub uv_relay1: u8,
-    pub uv_relay2: u8,
-    pub heat_relay: u8,
     pub overheat_temp: u8,
     pub overheat_time: u64, // Time in seconds
 }
+
 // web config struct
 #[derive(Debug, Deserialize)]
 pub struct WebConfig {
     pub address: String,    // Web server address (e.g., "127.0.0.1")
     pub port: u16,          // Web server port (e.g., 8080)
 }
+
 //schedule struct
 #[derive(Debug, Deserialize)]
 pub struct ScheduleConfig {
@@ -71,12 +78,12 @@ impl Config {
 
 impl MainConfig {
     pub fn validate(&self) -> Result<(), String> {
-        // No specific validation needed since fixed_mode is a boolean
+        // No specific validation needed since debug is a boolean
         Ok(())
     }
 }
 
-impl GetDataConfig {
+impl GpioConfig {
     pub fn validate(&self) -> Result<(), String> {
         // Validate GPIO pins
         if !(0..=27).contains(&self.ds18b20_bus) {
@@ -91,22 +98,21 @@ impl GetDataConfig {
         if !(0..=27).contains(&self.veml6075_uv2) {
             return Err(format!("Invalid GPIO number for veml6075_uv2: {}", self.veml6075_uv2));
         }
+        if !(0..=27).contains(&self.uv_relay1) {
+            return Err(format!("Invalid GPIO number for uv_relay1: {}", self.uv_relay1));
+        }
+        if !(0..=27).contains(&self.uv_relay2) {
+            return Err(format!("Invalid GPIO number for uv_relay2: {}", self.uv_relay2));
+        }
+        if !(0..=27).contains(&self.heat_relay) {
+            return Err(format!("Invalid GPIO number for heat_relay: {}", self.heat_relay));
+        }        
         Ok(())
     }
 }
 
 impl LightControlConfig {
     pub fn validate(&self) -> Result<(), String> {
-            // Validate GPIO pin numbers (assume valid range is 0-27 for Raspberry Pi GPIOs)
-            if !(0..=27).contains(&self.uv_relay1) {
-                return Err(format!("Invalid GPIO number for uv_relay1: {}", self.uv_relay1));
-            }
-            if !(0..=27).contains(&self.uv_relay2) {
-                return Err(format!("Invalid GPIO number for uv_relay2: {}", self.uv_relay2));
-            }
-            if !(0..=27).contains(&self.heat_relay) {
-                return Err(format!("Invalid GPIO number for heat_relay: {}", self.heat_relay));
-            }
 
             // Validate overheat_temp (0-60 °C)
             if !(0..=60).contains(&self.overheat_temp) {
