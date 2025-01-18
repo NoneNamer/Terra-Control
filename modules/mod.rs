@@ -5,4 +5,5 @@ pub mod ledStrip;
 pub mod web;
 pub mod display;
 pub mod cam;
-pub mod schedule;
+pub mod storage;
+pub mod models;
