@@ -48,6 +48,12 @@ pub struct WebConfig {
     pub port: u16,          // Web server port (e.g., 8080)
 }
 
+// Get data config struct
+#[derive(Debug, Deserialize)]
+pub struct WebConfig {
+    pub retry: u8,    // Sensor reading retry ammount
+}
+
 //schedule struct
 #[derive(Debug, Deserialize)]
 pub struct ScheduleConfig {

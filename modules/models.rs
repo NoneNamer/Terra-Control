@@ -24,6 +24,8 @@ pub struct Schedule {
     pub uv2_end: String,
     pub heat_start: String,
     pub heat_end: String,
+    pub led_start: String,
+    pub led_end: String,
     pub led_r: i32,
     pub led_g: i32,
     pub led_b: i32,
@@ -43,7 +45,7 @@ pub struct Override {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct History {
+pub struct Data {
     pub id: i32,
     pub timestamp: String,
     pub temp_basking1: Option<f32>,
@@ -54,4 +56,13 @@ pub struct History {
     pub time_uv2: Option<String>,
     pub time_heat: Option<String>,
     pub overheat: Option<String>,
+}
+#[derive(Debug)]
+pub struct SensorReadings {
+    pub timestamp: chrono::NaiveDateTime,
+    pub basking_temp: Option<f32>,
+    pub cool_temp: Option<f32>,
+    pub humidity: Option<f32>,
+    pub uv_1: Option<f32>,
+    pub uv_2: Option<f32>,
 }

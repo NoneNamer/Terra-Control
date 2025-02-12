@@ -2,10 +2,7 @@
 fixed_mode = false
 
 [get_data]
-ds18b20_bus = 
-dht22 = 
-veml6075_uv1 = 
-veml6075_uv2 = 
+retry = 3 
 
 [light_control]
 uv_relay1 = 

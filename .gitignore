@@ -1,6 +1,6 @@
 target/
+logs/
 Dockerfile
 *.log
 .dockerignore
 Cargo.lock
-old_schedule.rs
