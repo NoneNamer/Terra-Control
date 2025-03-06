@@ -100,36 +100,77 @@ impl LEDStrip {
     }
 }
 
-/// Controls relays via GPIO
-pub struct RelayController {
-    relay_pins: Vec<OutputPin>,
+/// Controls relays for UV, heat, and LED via GPIO 
+pub struct RelayController { 
+    uv1_relay: OutputPin,
+    uv2_relay: OutputPin,
+    heat_relay: OutputPin,
+    led_relay: OutputPin,
+} 
+
+/// Defines the available relay types
+#[derive(Debug, Clone, Copy)]
+pub enum RelayType {
+    UV1,
+    UV2,
+    Heat,
+    LED,
 }
 
-impl RelayController {
-    pub fn new(pins: &[u8]) -> Result<Self, Box<dyn Error>> {
-        let gpio = Gpio::new()?;
-        let relay_pins = pins
-            .iter()
-            .map(|&pin| gpio.get(pin).unwrap().into_output())
-            .collect();
-        Ok(Self { relay_pins })
-    }
+impl RelayController { 
+    pub fn new() -> Result<Self, Box<dyn Error>> { 
+        let config = GpioConfig::load();
+        let gpio = Gpio::new()?; 
+        
+        // Get pins from config
+        let uv1_relay = gpio.get(config.uv_relay1)?.into_output();
+        let uv2_relay = gpio.get(config.uv_relay2)?.into_output();
+        let heat_relay = gpio.get(config.heat_relay)?.into_output();
+        let led_relay = gpio.get(config.led_relay)?.into_output();
+        
+        Ok(Self { 
+            uv1_relay,
+            uv2_relay,
+            heat_relay,
+            led_relay,
+        }) 
+    } 
 
-    pub fn set_relay(&mut self, index: usize, state: bool) {
-        if let Some(pin) = self.relay_pins.get_mut(index) {
-            pin.write(if state { rppal::gpio::Level::High } else { rppal::gpio::Level::Low });
-        }
+    /// Set a specific relay by type
+    pub fn set_relay(&mut self, relay_type: RelayType, state: bool) {
+        let pin = match relay_type {
+            RelayType::UV1 => &mut self.uv1_relay,
+            RelayType::UV2 => &mut self.uv2_relay,
+            RelayType::Heat => &mut self.heat_relay,
+            RelayType::LED => &mut self.led_relay,
+        };
+        
+        pin.write(if state { rppal::gpio::Level::High } else { rppal::gpio::Level::Low });
     }
-
-    pub fn turn_all_on(&mut self) {
-        for pin in &mut self.relay_pins {
-            pin.set_high();
-        }
+    
+    /// Turn on a specific relay
+    pub fn turn_on(&mut self, relay_type: RelayType) {
+        self.set_relay(relay_type, true);
     }
-
-    pub fn turn_all_off(&mut self) {
-        for pin in &mut self.relay_pins {
-            pin.set_low();
-        }
+    
+    /// Turn off a specific relay
+    pub fn turn_off(&mut self, relay_type: RelayType) {
+        self.set_relay(relay_type, false);
+    }
+     
+    /// Turn all relays off
+    pub fn turn_all_off(&mut self) { 
+        self.uv1_relay.set_low();
+        self.uv2_relay.set_low();
+        self.heat_relay.set_low();
+        self.led_relay.set_low();
+    }
+    
+    /// Turn all relays on
+    pub fn turn_all_on(&mut self) { 
+        self.uv1_relay.set_high();
+        self.uv2_relay.set_high();
+        self.heat_relay.set_high();
+        self.led_relay.set_high();
     }
 }
