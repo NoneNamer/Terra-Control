@@ -13,8 +13,8 @@ Hardware <br />
 
 Raspberry Pi4 <br />
 DS18B20 temperature sensor (x2) <br />
-DHT22 Sensor / SHT31-D temperature and humidity Sensor <br />
-VEML6075 UV sensor <br />
+DHT22 temperature and humidity Sensor <br />
+VEML6075 UV sensor (x2)<br />
 WS2812B 4m 60p/m 12v min ip64                  # Need better RGBWW LEDs <br />
 SSD1306 OLED Display / SH1106 OLED Display <br />
 Mean Well RD-65a/b                             # Model dependent on LED voltage <br />
@@ -26,6 +26,7 @@ Data Structure <br />
 ├── Cargo.toml          # Project dependencies / config <br />
 ├── /modules            # Modules <br />
 │   ├── mod.rs          # Entry point for modules <br />
+│   ├── models.rs       # <br />
 │   ├── config.rs       # Handles loading from config.toml <br />
 │   ├── getData.rs      # Sensor reading logic <br />
 │   ├── schedule.rs     # sqlite db schedule handling <br />
@@ -43,4 +44,4 @@ Data Structure <br />
 │   ├── schedule.html <br />
 │   ├── data.html <br />
 │   └── cam.html <br />
-└── /lib                # Lib <br />
+└── /lib                # <br />
