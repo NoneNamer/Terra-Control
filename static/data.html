@@ -13,13 +13,141 @@
             <a href="index.html">Home</a>
             <a href="schedule.html">Schedule</a>
             <a href="data.html">Data</a>
+            <a href="led.html">LED Control</a>
             <a href="cam.html">Camera</a>
         </nav><hr>
 
         <h2>Logs and Data</h2>
         
+        <div class="data-section">
+            <h3>Recent Log Entries</h3>
+            <div class="log-container">
+                <div id="log-entries" class="log-entries">
+                    <p class="loading">Loading log entries...</p>
+                </div>
+                <div class="log-controls">
+                    <button id="refresh-logs" class="btn">Refresh Logs</button>
+                    <select id="log-filter">
+                        <option value="all">All Entries</option>
+                        <option value="info">Info</option>
+                        <option value="warning">Warnings</option>
+                        <option value="error">Errors</option>
+                    </select>
+                    <input type="number" id="log-limit" min="10" max="500" value="50" placeholder="Limit">
+                </div>
+            </div>
+        </div>
+
+        <div class="data-section">
+            <h3>Download Data</h3>
+            <div class="download-options">
+                <div class="download-option">
+                    <h4>Log Files</h4>
+                    <p>Download system log files</p>
+                    <button id="download-logs" class="btn">Download Logs</button>
+                </div>
+                <div class="download-option">
+                    <h4>Sensor Data</h4>
+                    <p>Download historical sensor readings</p>
+                    <div class="date-range">
+                        <label for="start-date">From:</label>
+                        <input type="date" id="start-date">
+                        <label for="end-date">To:</label>
+                        <input type="date" id="end-date">
+                    </div>
+                    <button id="download-sensor-data" class="btn">Download Sensor Data</button>
+                </div>
+            </div>
+        </div>
     </div>
 
-
+    <script src="api.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set default date range (last 30 days)
+            const today = new Date();
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(today.getDate() - 30);
+            
+            document.getElementById('end-date').valueAsDate = today;
+            document.getElementById('start-date').valueAsDate = thirtyDaysAgo;
+            
+            // Load initial log entries
+            loadLogEntries();
+            
+            // Set up event listeners
+            document.getElementById('refresh-logs').addEventListener('click', loadLogEntries);
+            document.getElementById('log-filter').addEventListener('change', loadLogEntries);
+            document.getElementById('log-limit').addEventListener('change', loadLogEntries);
+            document.getElementById('download-logs').addEventListener('click', downloadLogs);
+            document.getElementById('download-sensor-data').addEventListener('click', downloadSensorData);
+        });
+        
+        async function loadLogEntries() {
+            const logContainer = document.getElementById('log-entries');
+            const filter = document.getElementById('log-filter').value;
+            const limit = document.getElementById('log-limit').value;
+            
+            logContainer.innerHTML = '<p class="loading">Loading log entries...</p>';
+            
+            try {
+                const logs = await TerrariumAPI.getLogEntries(filter, limit);
+                
+                if (logs.length === 0) {
+                    logContainer.innerHTML = '<p class="no-data">No log entries found.</p>';
+                    return;
+                }
+                
+                logContainer.innerHTML = '';
+                logs.forEach(log => {
+                    const logEntry = document.createElement('div');
+                    logEntry.className = `log-entry ${log.level.toLowerCase()}`;
+                    
+                    const timestamp = document.createElement('span');
+                    timestamp.className = 'log-timestamp';
+                    timestamp.textContent = new Date(log.timestamp).toLocaleString();
+                    
+                    const level = document.createElement('span');
+                    level.className = 'log-level';
+                    level.textContent = log.level;
+                    
+                    const message = document.createElement('span');
+                    message.className = 'log-message';
+                    message.textContent = log.message;
+                    
+                    logEntry.appendChild(timestamp);
+                    logEntry.appendChild(level);
+                    logEntry.appendChild(message);
+                    logContainer.appendChild(logEntry);
+                });
+            } catch (error) {
+                logContainer.innerHTML = `<p class="error">Error loading logs: ${error.message}</p>`;
+            }
+        }
+        
+        async function downloadLogs() {
+            try {
+                await TerrariumAPI.downloadLogs();
+            } catch (error) {
+                alert(`Error downloading logs: ${error.message}`);
+            }
+        }
+        
+        async function downloadSensorData() {
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
+            
+            if (!startDate || !endDate) {
+                alert('Please select both start and end dates');
+                return;
+            }
+            
+            try {
+                await TerrariumAPI.downloadSensorData(startDate, endDate);
+            } catch (error) {
+                alert(`Error downloading sensor data: ${error.message}`);
+            }
+        }
+    </script>
 </body>
 </html>

@@ -37,6 +37,73 @@ class TerrariumAPI {
         });
         return response.ok;
     }
+    
+    // New methods for log and data functionality
+    static async getLogEntries(filter = 'all', limit = 50) {
+        const response = await fetch(`${API_BASE_URL}/logs?filter=${filter}&limit=${limit}`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch logs: ${response.statusText}`);
+        }
+        return response.json();
+    }
+    
+    static async downloadLogs() {
+        const response = await fetch(`${API_BASE_URL}/logs/download`);
+        if (!response.ok) {
+            throw new Error(`Failed to download logs: ${response.statusText}`);
+        }
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        
+        // Get filename from Content-Disposition header or use default
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = 'terrarium_logs.zip';
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+            if (filenameMatch) {
+                filename = filenameMatch[1];
+            }
+        }
+        
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+    }
+    
+    static async downloadSensorData(startDate, endDate) {
+        const response = await fetch(`${API_BASE_URL}/data/download?start=${startDate}&end=${endDate}`);
+        if (!response.ok) {
+            throw new Error(`Failed to download sensor data: ${response.statusText}`);
+        }
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        
+        // Get filename from Content-Disposition header or use default
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = `terrarium_data_${startDate}_to_${endDate}.csv`;
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+            if (filenameMatch) {
+                filename = filenameMatch[1];
+            }
+        }
+        
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+    }
 }
 
 // index.js

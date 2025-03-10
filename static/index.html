@@ -13,14 +13,15 @@
             <a href="index.html">Home</a>
             <a href="schedule.html">Schedule</a>
             <a href="data.html">Data</a>
+            <a href="led.html">LED Control</a>
             <a href="cam.html">Camera</a>
         </nav><hr>
 
         <h2>Current Readings</h2>
-        <p>Basking Temperature 1: <span id="baskingTemp"></span>&deg;C</p>
-        <p>Basking Temperature 2: <span id="controlTemp"></span>&deg;C</p>
-        <p>Cool Zone Temperature: <span id="coolZoneTemp"></span>&deg;C</p>
-        <p>Humidity: <span id="humidity"></span>%</p><hr>
+        <p>Basking Temperature 1: <span id="baskingTemp">--</span>&deg;C</p>
+        <p>Basking Temperature 2: <span id="controlTemp">--</span>&deg;C</p>
+        <p>Cool Zone Temperature: <span id="coolZoneTemp">--</span>&deg;C</p>
+        <p>Humidity: <span id="humidity">--</span>%</p><hr>
 
         <div class="graph-container">
             <div class="graph-box">
@@ -31,73 +32,15 @@
             </div>
         </div><br><br><hr>
         <h2>UV Status</h2>
-        <p>UV1: <span id="UV1"></span> UVI ✅</p>
-        <p>UV2: <span id="UV2"></span> UVI ❌</p> // missing Boolean status implementation
+        <p>UV1: <span id="UV1">--</span> UVI <span id="UV1Status">--</span></p>
+        <p>UV2: <span id="UV2">--</span> UVI <span id="UV2Status">--</span></p>
         <br><br><hr>
-        <h2>RGB Overrride</h2>
-        <form id="rgbForm">
-            <div class="container">
-                <label for="override">Override:</label>
-                <input type='checkbox' id="override" name='override' value='true'>
-            </div>
-            <div class="container">
-                <label for="red">Red:</label>
-                <input type='number' id="red" name='red' min='0' max='255' value='0'>
-
-                <label for="green">Green:</label>
-                <input type='number' id="green" name='green' min='0' max='255' value='0'>
-
-                <label for="blue">Blue:</label>
-                <input type='number' id="blue" name='blue' min='0' max='255' value='0'>
-                <br>
-                <label for="wwhite">Warm White:</label>
-                <input type='number' id="wwhite" name='wwhite' min='0' max='255' value='0'>
-
-                <label for="cwhite">Cold White:</label>
-                <input type='number' id="cwhite" name='cwhite' min='0' max='255' value='0'>
-            </div>
-            <input type='submit' value='Submit'>
-        </form><hr>
     </div>
 
     <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
     <script>
-        // Function to generate random number within a range
-        function randomInRange(min, max) {
-            return Math.random() * (max - min) + min;
-        }
-
-        // Generate dummy data for a single day
-        const generateDailyData = () => {
-            const data = [];
-            for (let hour = 0; hour < 24; hour += 2) {
-                const time = `${hour.toString().padStart(2, '0')}:00`;
-                const baskingTemp = randomInRange(30, 50);
-                const coolZoneTemp = randomInRange(18, Math.min(baskingTemp - 4, 50));
-                const humidity = randomInRange(15, 65);
-                data.push({
-                    time,
-                    baskingTemp: parseFloat(baskingTemp.toFixed(1)),
-                    controlTemp: parseFloat(baskingTemp.toFixed(1) - 2),
-                    coolZoneTemp: parseFloat(coolZoneTemp.toFixed(1)),
-                    humidity: parseFloat(humidity.toFixed(1))
-                });
-            }
-            return data;
-        };
-
-        const todayData = generateDailyData();
-        const yesterdayData = generateDailyData();
-
-        // Update current temperature and humidity (using the latest data point)
-        const latestData = todayData[todayData.length - 1];
-        document.getElementById('baskingTemp').textContent = latestData.baskingTemp;
-        document.getElementById('controlTemp').textContent = latestData.controlTemp;
-        document.getElementById('coolZoneTemp').textContent = latestData.coolZoneTemp;
-        document.getElementById('humidity').textContent = latestData.humidity;
-        document.getElementById('UV1').textContent = 7;
-        document.getElementById('UV2').textContent = 9;
-
+        // Charts for today and yesterday
+        let todayChart, yesterdayChart;
         
         // Function to create a chart
         function createChart(ctx, data, title) {
@@ -108,7 +51,7 @@
                     datasets: [
                         {
                             label: 'Basking Temp',
-                            data: data.map(d => d.baskingTemp),
+                            data: data.map(d => d.temperature),
                             borderColor: 'rgb(255, 99, 132)',
                             fill: false
                         },
@@ -145,29 +88,117 @@
             });
         }
 
-        // Get current date and yesterday's date
-        const today = new Date();
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
+        // Fetch current values from API
+        async function fetchCurrentValues() {
+            try {
+                const response = await fetch('/api/values');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Update the HTML with actual values
+                document.getElementById('baskingTemp').textContent = data.baskingTemp.toFixed(1);
+                document.getElementById('controlTemp').textContent = data.controlTemp.toFixed(1);
+                document.getElementById('coolZoneTemp').textContent = data.coolZoneTemp.toFixed(1);
+                document.getElementById('humidity').textContent = data.humidity.toFixed(1);
+                
+                // Update UV values and status
+                document.getElementById('UV1').textContent = data.uv1.toFixed(1);
+                document.getElementById('UV2').textContent = data.uv2.toFixed(1);
+                
+                // Update UV status indicators
+                document.getElementById('UV1Status').textContent = data.uv1_on ? '✅' : '❌';
+                document.getElementById('UV2Status').textContent = data.uv2_on ? '✅' : '❌';
+                
+            } catch (error) {
+                console.error('Error fetching current values:', error);
+            }
+        }
 
-        // Format dates
-        const formatDate = (date) => {
-            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        };
+        // Fetch graph data for today
+        async function fetchTodayGraphData() {
+            try {
+                const response = await fetch('/api/graph/today');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Get current date for title
+                const today = new Date();
+                const formattedDate = today.toLocaleDateString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    year: 'numeric' 
+                });
+                
+                // Create or update today's chart
+                const todayCtx = document.getElementById('todayGraph').getContext('2d');
+                if (todayChart) {
+                    todayChart.data.labels = data.map(d => d.time);
+                    todayChart.data.datasets[0].data = data.map(d => d.temperature);
+                    todayChart.data.datasets[1].data = data.map(d => d.coolZoneTemp);
+                    todayChart.data.datasets[2].data = data.map(d => d.humidity);
+                    todayChart.update();
+                } else {
+                    todayChart = createChart(todayCtx, data, `Data for ${formattedDate}`);
+                }
+                
+            } catch (error) {
+                console.error('Error fetching today\'s graph data:', error);
+            }
+        }
 
-        // Create today's chart
-        const todayCtx = document.getElementById('todayGraph').getContext('2d');
-        createChart(todayCtx, todayData, `Data for ${formatDate(today)}`);
+        // Fetch graph data for yesterday
+        async function fetchYesterdayGraphData() {
+            try {
+                const response = await fetch('/api/graph/yesterday');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Get yesterday's date for title
+                const today = new Date();
+                const yesterday = new Date(today);
+                yesterday.setDate(yesterday.getDate() - 1);
+                const formattedDate = yesterday.toLocaleDateString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    year: 'numeric' 
+                });
+                
+                // Create or update yesterday's chart
+                const yesterdayCtx = document.getElementById('yesterdayGraph').getContext('2d');
+                if (yesterdayChart) {
+                    yesterdayChart.data.labels = data.map(d => d.time);
+                    yesterdayChart.data.datasets[0].data = data.map(d => d.temperature);
+                    yesterdayChart.data.datasets[1].data = data.map(d => d.coolZoneTemp);
+                    yesterdayChart.data.datasets[2].data = data.map(d => d.humidity);
+                    yesterdayChart.update();
+                } else {
+                    yesterdayChart = createChart(yesterdayCtx, data, `Data for ${formattedDate}`);
+                }
+                
+            } catch (error) {
+                console.error('Error fetching yesterday\'s graph data:', error);
+            }
+        }
 
-        // Create yesterday's chart
-        const yesterdayCtx = document.getElementById('yesterdayGraph').getContext('2d');
-        createChart(yesterdayCtx, yesterdayData, `Data for ${formatDate(yesterday)}`);
+        // Initial data load
+        fetchCurrentValues();
+        fetchTodayGraphData();
+        fetchYesterdayGraphData();
 
-        // Add form submission handlers
-        document.getElementById('rgbForm').addEventListener('submit', (e) => {
-            e.preventDefault();
-            console.log('RGB form submitted');
-        });
+        // Set up periodic refresh (every 60 seconds)
+        setInterval(() => {
+            fetchCurrentValues();
+            fetchTodayGraphData();
+        }, 60000);
     </script>
 </body>
 </html>

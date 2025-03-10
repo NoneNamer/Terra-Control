@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LED Control - Terrarium Controller</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class='container'>
+        <h1>Terrarium Controller</h1><hr>
+        <nav>
+            <a href="index.html">Home</a>
+            <a href="schedule.html">Schedule</a>
+            <a href="data.html">Data</a>
+            <a href="led.html">LED Control</a>
+            <a href="cam.html">Camera</a>
+        </nav><hr>
+
+        <h2>LED Control Panel</h2>
+        <div class="led-control-section">
+            <h3>Manual Override</h3>
+            <p>When override is enabled, the system will use the manual RGB and white settings instead of the natural light cycle.</p>
+            <form id="ledForm">
+                <div class="control-group">
+                    <label for="override">Override Natural Light:</label>
+                    <input type='checkbox' id="override" name='override' value='true'>
+                    
+                    <label for="ledPower">LED Power:</label>
+                    <input type='checkbox' id="ledPower" name='ledPower'>
+                </div>
+                <div class="control-group">
+                    <label for="red">Red:</label>
+                    <input type='range' id="red" name='red' min='0' max='255' value='0'>
+                    <span id="redValue">0</span>
+
+                    <label for="green">Green:</label>
+                    <input type='range' id="green" name='green' min='0' max='255' value='0'>
+                    <span id="greenValue">0</span>
+
+                    <label for="blue">Blue:</label>
+                    <input type='range' id="blue" name='blue' min='0' max='255' value='0'>
+                    <span id="blueValue">0</span>
+                    <br>
+                    <label for="wwhite">Warm White:</label>
+                    <input type='range' id="wwhite" name='wwhite' min='0' max='255' value='0'>
+                    <span id="wwhiteValue">0</span>
+
+                    <label for="cwhite">Cold White:</label>
+                    <input type='range' id="cwhite" name='cwhite' min='0' max='255' value='0'>
+                    <span id="cwhiteValue">0</span>
+                </div>
+                <input type='submit' value='Apply Manual Settings'>
+            </form>
+        </div><hr>
+
+        <div class="led-control-section">
+            <h3>Natural Light Settings</h3>
+            <p>Configure how the natural light cycle works throughout the day.</p>
+            <form id="naturalLightForm">
+                <div class="control-group">
+                    <label for="seasonWeight">Season Influence:</label>
+                    <input type='range' id="seasonWeight" name='seasonWeight' min='0' max='1' step='0.1' value='0.3'>
+                    <span id="seasonWeightValue">0.3</span>
+                    <p class="setting-description">Higher values give more influence to the seasonal colors defined in the schedule.</p>
+                </div>
+                
+                <h4>Morning Light (Default Values)</h4>
+                <div class="control-group">
+                    <label for="morningRed">Red:</label>
+                    <input type='range' id="morningRed" name='morningRed' min='0' max='255' value='255'>
+                    <span id="morningRedValue">255</span>
+
+                    <label for="morningGreen">Green:</label>
+                    <input type='range' id="morningGreen" name='morningGreen' min='0' max='255' value='180'>
+                    <span id="morningGreenValue">180</span>
+
+                    <label for="morningBlue">Blue:</label>
+                    <input type='range' id="morningBlue" name='morningBlue' min='0' max='255' value='100'>
+                    <span id="morningBlueValue">100</span>
+                    <br>
+                    <label for="morningWW">Warm White:</label>
+                    <input type='range' id="morningWW" name='morningWW' min='0' max='255' value='200'>
+                    <span id="morningWWValue">200</span>
+
+                    <label for="morningCW">Cold White:</label>
+                    <input type='range' id="morningCW" name='morningCW' min='0' max='255' value='50'>
+                    <span id="morningCWValue">50</span>
+                </div>
+                
+                <h4>Noon Light (Default Values)</h4>
+                <div class="control-group">
+                    <label for="noonRed">Red:</label>
+                    <input type='range' id="noonRed" name='noonRed' min='0' max='255' value='255'>
+                    <span id="noonRedValue">255</span>
+
+                    <label for="noonGreen">Green:</label>
+                    <input type='range' id="noonGreen" name='noonGreen' min='0' max='255' value='240'>
+                    <span id="noonGreenValue">240</span>
+
+                    <label for="noonBlue">Blue:</label>
+                    <input type='range' id="noonBlue" name='noonBlue' min='0' max='255' value='220'>
+                    <span id="noonBlueValue">220</span>
+                    <br>
+                    <label for="noonWW">Warm White:</label>
+                    <input type='range' id="noonWW" name='noonWW' min='0' max='255' value='50'>
+                    <span id="noonWWValue">50</span>
+
+                    <label for="noonCW">Cold White:</label>
+                    <input type='range' id="noonCW" name='noonCW' min='0' max='255' value='255'>
+                    <span id="noonCWValue">255</span>
+                </div>
+                
+                <h4>Evening Light (Default Values)</h4>
+                <div class="control-group">
+                    <label for="eveningRed">Red:</label>
+                    <input type='range' id="eveningRed" name='eveningRed' min='0' max='255' value='255'>
+                    <span id="eveningRedValue">255</span>
+
+                    <label for="eveningGreen">Green:</label>
+                    <input type='range' id="eveningGreen" name='eveningGreen' min='0' max='255' value='140'>
+                    <span id="eveningGreenValue">140</span>
+
+                    <label for="eveningBlue">Blue:</label>
+                    <input type='range' id="eveningBlue" name='eveningBlue' min='0' max='255' value='50'>
+                    <span id="eveningBlueValue">50</span>
+                    <br>
+                    <label for="eveningWW">Warm White:</label>
+                    <input type='range' id="eveningWW" name='eveningWW' min='0' max='255' value='255'>
+                    <span id="eveningWWValue">255</span>
+
+                    <label for="eveningCW">Cold White:</label>
+                    <input type='range' id="eveningCW" name='eveningCW' min='0' max='255' value='0'>
+                    <span id="eveningCWValue">0</span>
+                </div>
+                
+                <input type='submit' value='Save Natural Light Settings'>
+            </form>
+        </div><hr>
+        
+        <div class="led-control-section">
+            <h3>Current Light Preview</h3>
+            <div id="lightPreview" class="light-preview"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Fetch current LED status
+        async function fetchLEDStatus() {
+            try {
+                const response = await fetch('/api/led/status');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Update the LED form with actual values
+                document.getElementById('ledPower').checked = data.power;
+                document.getElementById('override').checked = !data.use_natural;
+                document.getElementById('red').value = data.r;
+                document.getElementById('green').value = data.g;
+                document.getElementById('blue').value = data.b;
+                document.getElementById('wwhite').value = data.ww;
+                document.getElementById('cwhite').value = data.cw;
+                document.getElementById('seasonWeight').value = data.season_weight;
+                
+                // Update value displays
+                document.getElementById('redValue').textContent = data.r;
+                document.getElementById('greenValue').textContent = data.g;
+                document.getElementById('blueValue').textContent = data.b;
+                document.getElementById('wwhiteValue').textContent = data.ww;
+                document.getElementById('cwhiteValue').textContent = data.cw;
+                document.getElementById('seasonWeightValue').textContent = data.season_weight.toFixed(1);
+                
+                // Update light preview
+                updateLightPreview(data.r, data.g, data.b, data.ww, data.cw);
+                
+            } catch (error) {
+                console.error('Error fetching LED status:', error);
+            }
+        }
+
+        // Set LED power
+        async function setLEDPower(power) {
+            try {
+                const response = await fetch('/api/led/power', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ power }),
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                console.log('LED power updated successfully');
+                
+            } catch (error) {
+                console.error('Error setting LED power:', error);
+            }
+        }
+
+        // Set LED colors
+        async function setLEDColor(r, g, b, ww, cw) {
+            try {
+                const response = await fetch('/api/led/color', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ r, g, b, ww, cw }),
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                console.log('LED color updated successfully');
+                updateLightPreview(r, g, b, ww, cw);
+                
+            } catch (error) {
+                console.error('Error setting LED color:', error);
+            }
+        }
+
+        // Set natural light settings
+        async function setNaturalLightSettings(override_settings, season_weight) {
+            try {
+                const response = await fetch('/api/led/natural', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        override_settings,
+                        season_weight
+                    }),
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                console.log('Natural light settings updated successfully');
+                
+            } catch (error) {
+                console.error('Error setting natural light settings:', error);
+            }
+        }
+
+        // Update light preview
+        function updateLightPreview(r, g, b, ww, cw) {
+            const preview = document.getElementById('lightPreview');
+            
+            // Calculate a simplified representation of the light
+            // This is just an approximation as RGBWW is complex to display on a screen
+            const rValue = parseInt(r);
+            const gValue = parseInt(g);
+            const bValue = parseInt(b);
+            
+            // Add warm white (yellowish) and cool white (blueish) approximations
+            const wwValue = parseInt(ww);
+            const cwValue = parseInt(cw);
+            
+            // Warm white adds to red and green (yellowish)
+            const finalR = Math.min(255, rValue + wwValue * 0.8);
+            const finalG = Math.min(255, gValue + wwValue * 0.6 + cwValue * 0.5);
+            const finalB = Math.min(255, bValue + cwValue * 0.9);
+            
+            preview.style.backgroundColor = `rgb(${finalR}, ${finalG}, ${finalB})`;
+        }
+
+        // Add slider input event listeners to update value displays
+        document.getElementById('red').addEventListener('input', function() {
+            document.getElementById('redValue').textContent = this.value;
+            updateLightPreview(
+                this.value,
+                document.getElementById('green').value,
+                document.getElementById('blue').value,
+                document.getElementById('wwhite').value,
+                document.getElementById('cwhite').value
+            );
+        });
+        
+        document.getElementById('green').addEventListener('input', function() {
+            document.getElementById('greenValue').textContent = this.value;
+            updateLightPreview(
+                document.getElementById('red').value,
+                this.value,
+                document.getElementById('blue').value,
+                document.getElementById('wwhite').value,
+                document.getElementById('cwhite').value
+            );
+        });
+        
+        document.getElementById('blue').addEventListener('input', function() {
+            document.getElementById('blueValue').textContent = this.value;
+            updateLightPreview(
+                document.getElementById('red').value,
+                document.getElementById('green').value,
+                this.value,
+                document.getElementById('wwhite').value,
+                document.getElementById('cwhite').value
+            );
+        });
+        
+        document.getElementById('wwhite').addEventListener('input', function() {
+            document.getElementById('wwhiteValue').textContent = this.value;
+            updateLightPreview(
+                document.getElementById('red').value,
+                document.getElementById('green').value,
+                document.getElementById('blue').value,
+                this.value,
+                document.getElementById('cwhite').value
+            );
+        });
+        
+        document.getElementById('cwhite').addEventListener('input', function() {
+            document.getElementById('cwhiteValue').textContent = this.value;
+            updateLightPreview(
+                document.getElementById('red').value,
+                document.getElementById('green').value,
+                document.getElementById('blue').value,
+                document.getElementById('wwhite').value,
+                this.value
+            );
+        });
+
+        document.getElementById('seasonWeight').addEventListener('input', function() {
+            document.getElementById('seasonWeightValue').textContent = parseFloat(this.value).toFixed(1);
+        });
+
+        // Add natural light preset sliders event listeners
+        const naturalLightSliders = [
+            'morningRed', 'morningGreen', 'morningBlue', 'morningWW', 'morningCW',
+            'noonRed', 'noonGreen', 'noonBlue', 'noonWW', 'noonCW',
+            'eveningRed', 'eveningGreen', 'eveningBlue', 'eveningWW', 'eveningCW'
+        ];
+
+        naturalLightSliders.forEach(sliderId => {
+            document.getElementById(sliderId).addEventListener('input', function() {
+                document.getElementById(`${sliderId}Value`).textContent = this.value;
+            });
+        });
+
+        // Add override switch event listener
+        document.getElementById('override').addEventListener('change', function() {
+            setNaturalLightSettings(!this.checked, parseFloat(document.getElementById('seasonWeight').value));
+        });
+
+        // Add power switch event listener
+        document.getElementById('ledPower').addEventListener('change', function() {
+            setLEDPower(this.checked);
+        });
+
+        // Handle form submission for LED settings
+        document.getElementById('ledForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Update override status
+            setNaturalLightSettings(!document.getElementById('override').checked, 
+                                   parseFloat(document.getElementById('seasonWeight').value));
+            
+            // Update LED settings
+            const r = parseInt(document.getElementById('red').value);
+            const g = parseInt(document.getElementById('green').value);
+            const b = parseInt(document.getElementById('blue').value);
+            const ww = parseInt(document.getElementById('wwhite').value);
+            const cw = parseInt(document.getElementById('cwhite').value);
+            
+            setLEDColor(r, g, b, ww, cw);
+        });
+
+        // Handle form submission for natural light settings
+        document.getElementById('naturalLightForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Update natural light settings
+            setNaturalLightSettings(!document.getElementById('override').checked, 
+                                   parseFloat(document.getElementById('seasonWeight').value));
+            
+            // TODO: Add API endpoint to save the natural light presets
+            alert('Natural light settings saved. Note: Preset values are not yet implemented in the backend.');
+        });
+
+        // Initial data load
+        fetchLEDStatus();
+
+        // Set up periodic refresh (every 30 seconds)
+        setInterval(fetchLEDStatus, 30000);
+    </script>
+</body>
+</html> 
