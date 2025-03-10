@@ -7,3 +7,4 @@ pub mod display;
 pub mod cam;
 pub mod storage;
 pub mod models;
+pub mod logs;
