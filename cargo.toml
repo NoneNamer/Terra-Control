@@ -9,14 +9,22 @@ tokio = { version = "1", features = ["full"] }									#
 serde = { version = "1.0", features = ["derive"] }								#
 chrono = { version = "0.4", features = ["serde"] }								#
 toml = "0.7"																	# 
-axum = "0.6"                                  									# Web framework
+axum = { version = "0.6", features = ["sse"] }									# Web framework with Server-Sent Events support
 tower = "0.4"                                 									# Middleware and routing
+tower-http = { version = "0.4", features = ["fs"] }								# HTTP-specific middleware and static file serving
 rppal = "0.13"																	# GPIO
 dht-sensor = "0.2.1"															#
 rusqlite = { version = "0.29", features = ["bundled"] }							# sqlite db
 embedded-hal = { version = "0.2.7", features = ["unproven"] }					#
 zip = "0.6"                                                                      # For creating zip files
 sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "sqlite", "chrono"] } # SQL toolkit
+raspicam = "0.2"                                                                 # Raspberry Pi camera control
+futures = "0.3"                                                                  # Asynchronous primitives
+bytes = "1.0"                                                                    # Byte buffer utilities
+tokio-stream = "0.1"                                                             # Stream utilities for Tokio
+log = "0.4"                                                                      # Logging facade
+base64 = "0.13"                                                                   # Base64 encoding/decoding
+image = "0.24"                                                                     # Image processing
 
 [[bin]]
 name = "terra-control"

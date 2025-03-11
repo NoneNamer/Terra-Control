@@ -1,25 +1,62 @@
 [main]
-fixed_mode = false
+setup_mode = true
 
 [get_data]
 retry = 3 
+interval = 60
+backup_sensor = true
+storage_days = 30
+ds18b20_bus = 4
+dht22_pin = 18
 
 [light_control]
-uv_relay1 = 
-uv_relay2 = 
-heat_relay = 
-overheat_temp =
-overheat_time = 
+overheat_temp = 50
+overheat_time = 3000
+
+[gpio]
+led_relay = 17
+uv_relay1 = 22
+uv_relay2 = 23
+heat_relay = 27
+ds18b20_bus = 4
+dht22_pin = 18
+veml6075_uv1 = 0
+veml6075_uv2 = 1
+ic_count = 16
 
 [led]
+default_mode = "natural"
+default_brightness = 50
+season_weight = 0.3
+
+# Natural light presets - RGB values for time of day
+morning_r = 255
+morning_g = 180
+morning_b = 100
+morning_ww = 200
+morning_cw = 50
+
+noon_r = 255
+noon_g = 240
+noon_b = 220
+noon_ww = 50
+noon_cw = 255
+
+evening_r = 255
+evening_g = 140
+evening_b = 50
+evening_ww = 255
+evening_cw = 0
 
 [display]
+# Future display settings
 
 [web]
 address = "0.0.0.0"
 port = 80
 
 [cam]
+# Camera settings
 
 [db]
 def_uv1_start = "06:30"
