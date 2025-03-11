@@ -24,7 +24,7 @@ The system manages lighting, heating, and environmental conditions while providi
 
 ## Hardware Requirements
 
-- Raspberry Pi 4
+- Raspberry Pi 3a+
 - Temperature Sensors:
   - DS18B20 temperature sensors (×2)
   - DHT22 temperature and humidity sensor
@@ -51,7 +51,7 @@ The system manages lighting, heating, and environmental conditions while providi
 │   ├── getData.rs      # Sensor reading logic
 │   ├── schedule.rs     # SQLite DB schedule handling
 │   ├── lightControl.rs # UV and heatspot control
-│   ├── led.rs          # LED lighting control
+│   ├── ledStrip.rs     # LED lighting control
 │   ├── display.rs      # Display control
 │   ├── web.rs          # Web server logic
 │   └── cam.rs          # Camera handling logic
@@ -63,6 +63,7 @@ The system manages lighting, heating, and environmental conditions while providi
 │   ├── index.html      # Main dashboard
 │   ├── schedule.html   # Schedule configuration
 │   ├── data.html       # Data visualization
+│   ├── led.html        # LED controll
 │   └── cam.html        # Camera stream page
 └── /lib                # External libraries
 ```
@@ -74,7 +75,7 @@ The system manages lighting, heating, and environmental conditions while providi
    - Web interface provides most common configuration options
 
 2. **Web Interface**
-   - Access the web interface at `http://your-raspberry-pi-ip:8080`
+   - Access the web interface at `http://your-raspberry-pi-ip:80`
    - Configure schedules, view current readings, and access the camera stream
 
 3. **Monitoring**
