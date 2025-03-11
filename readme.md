@@ -1,47 +1,101 @@
-Terrarium Controller <br />
-WIP <br />
+# Terrarium Controller WIP
 
-Main Functions <br />
-1. UV, LED and heating control on a configurable timer <br />
-2. Overheat protection <br />
-3. Temperature and humidity logging <br />
-4. UV level monitoring <br />
-5. Webinterface for configuration and monitoring <br />
-6. Camera stream to webpage <br />
+## Overview
 
-Hardware <br />
+The system manages lighting, heating, and environmental conditions while providing real-time monitoring through a web interface. It's designed with reliability and customization.
 
-Raspberry Pi4 <br />
-DS18B20 temperature sensor (x2) <br />
-DHT22 temperature and humidity Sensor <br />
-VEML6075 UV sensor (x2)<br />
-WS2812B 4m 60p/m 12v min ip64                  # Need better RGBWW LEDs <br />
-SSD1306 OLED Display / SH1106 OLED Display <br />
-Mean Well RD-65a/b                             # Model dependent on LED voltage <br />
-Phillips HID- PV C 70 <br />
+## Features
 
-Data Structure <br />
-├── main.rs             # Main entry point <br />
-├── config.toml         # Configuration file <br />
-├── Cargo.toml          # Project dependencies / config <br />
-├── /modules            # Modules <br />
-│   ├── mod.rs          # Entry point for modules <br />
-│   ├── models.rs       # <br />
-│   ├── config.rs       # Handles loading from config.toml <br />
-│   ├── getData.rs      # Sensor reading logic <br />
-│   ├── schedule.rs     # sqlite db schedule handling <br />
-│   ├── lightControl.rs # UV and heatspot control <br />
-│   ├── led.rs          # LED lighting control <br />
-│   ├── display.rs      # Display control <br />
-│   ├── web.rs          # Web server logic <br />
-│   └── cam.rs          # Camera handling logic <br />
-├── /logs               # Log files directory <br />
-│   ├── terra-sys.log <br />
-│   └── terra-temp.log <br />
-├── /static             # Web assets <br />
-│   ├── styles.css <br />
-│   ├── index.html <br />
-│   ├── schedule.html <br />
-│   ├── data.html <br />
-│   └── cam.html <br />
-└── /lib                # <br />
+- **Environmental Control**
+  - UV, LED, and heating management on configurable timers
+  - Smart day/night cycle lighting simulation
+  - Overheat protection with automatic shutdown
+
+- **Monitoring**
+  - Temperature and humidity tracking from multiple sensors
+  - UV level monitoring with dual sensors
+  - Real-time data logging and historical data analysis
+  
+- **User Interface**
+  - Web interface for configuration and monitoring
+  - Live camera stream for remote observation
+  - OLED display for local status at a glance
+  - Mobile-friendly responsive design
+
+## Hardware Requirements
+
+- Raspberry Pi 4
+- Temperature Sensors:
+  - DS18B20 temperature sensors (×2)
+  - DHT22 temperature and humidity sensor
+- VEML6075 UV sensors (×2)
+- WS2805 LED strip for ambient lighting
+- Display: SSD1306 or SH1106 OLED Display
+- Power Management:
+  - Mean Well RD-65b power supply
+  - Phillips HID-PV C 70 ballast
+- Relay board for controlling heating elements and UV lighting
+
+
+## Project Structure
+
+```
+├── main.rs             # Main entry point
+├── config.toml         # Configuration file
+├── Cargo.toml          # Project dependencies / config
+├── /modules            # Modules
+│   ├── mod.rs          # Entry point for modules
+│   ├── models.rs       # Data models
+│   ├── config.rs       # Handles loading from config.toml
+│   ├── gpio.rs         # GPIO out module
+│   ├── getData.rs      # Sensor reading logic
+│   ├── schedule.rs     # SQLite DB schedule handling
+│   ├── lightControl.rs # UV and heatspot control
+│   ├── led.rs          # LED lighting control
+│   ├── display.rs      # Display control
+│   ├── web.rs          # Web server logic
+│   └── cam.rs          # Camera handling logic
+├── /logs               # Log files directory
+│   ├── terra-sys.log   # System logs
+│   └── terra-temp.log  # Temperature logs
+├── /static             # Web assets
+│   ├── styles.css      # CSS styles
+│   ├── index.html      # Main dashboard
+│   ├── schedule.html   # Schedule configuration
+│   ├── data.html       # Data visualization
+│   └── cam.html        # Camera stream page
+└── /lib                # External libraries
+```
+
+## Usage
+
+1. **Configuration**
+   - Edit `config.toml` to adjust hardware settings, scheduling defaults, and system parameters
+   - Web interface provides most common configuration options
+
+2. **Web Interface**
+   - Access the web interface at `http://your-raspberry-pi-ip:8080`
+   - Configure schedules, view current readings, and access the camera stream
+
+3. **Monitoring**
+   - Temperature, humidity, and UV data are logged to the database
+   - View historical data through the web interface charts
+   - System logs capture events and potential issues
+
+## Development
+
+This project is built with:
+- Rust programming language
+- Tokio for async runtime
+- SQLite for data storage
+- Embedded hardware interfaces for sensors and controls
+- Axum for the web server
+
+## License
+
+[MIT License](LICENSE) - Feel free to use and modify.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
