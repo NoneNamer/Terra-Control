@@ -93,7 +93,7 @@ This project is built with:
 
 ## License
 
-[MIT License](LICENSE) - Feel free to use and modify.
+
 
 ## Contributing
 
