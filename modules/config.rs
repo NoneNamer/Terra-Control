@@ -11,7 +11,9 @@ pub struct Config {
     pub gpio: GpioConfig,
     pub db: ScheduleConfig,
     pub web: WebConfig, 
-    pub light: LightControlConfig,
+    pub light_control: LightControlConfig,
+    pub get_data: GetDataConfig,
+    pub led: LedConfig,
 }
 
 //main config struct
@@ -27,9 +29,9 @@ pub struct GpioConfig {
     pub uv_relay2: u8,
     pub heat_relay: u8,
     pub led_relay: u8,
-    pub ic_count: u16,
-    pub ds18b20_bus: u8,
-    pub dht22: u8,
+    pub ic_count: Option<usize>,
+    pub ds18b20_bus: Option<u8>,
+    pub dht22_pin: Option<u8>,
     pub veml6075_uv1: u8,
     pub veml6075_uv2: u8,
 }
@@ -41,17 +43,20 @@ pub struct LightControlConfig {
     pub overheat_time: u64, // Time in seconds
 }
 
+// New GetDataConfig struct
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetDataConfig {
+    pub retry: u8,              // Number of retries for failed sensor readings
+    pub interval: Option<u64>,  // Interval in seconds for data collection (default: 60)
+    pub backup_sensor: bool,    // Whether to use DHT22 as backup for overheat detection
+    pub storage_days: Option<u32>, // How many days of data to keep (for automatic cleanup)
+}
+
 // web config struct
 #[derive(Debug, Deserialize)]
 pub struct WebConfig {
     pub address: String,    // Web server address (e.g., "127.0.0.1")
     pub port: u16,          // Web server port (e.g., 8080)
-}
-
-// Get data config struct
-#[derive(Debug, Deserialize)]
-pub struct WebConfig {
-    pub retry: u8,    // Sensor reading retry ammount
 }
 
 //schedule struct
@@ -70,6 +75,33 @@ pub struct ScheduleConfig {
     pub def_led_CW: i32,
 }
 
+// LED configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedConfig {
+    pub default_mode: String,                     // Either "manual" or "natural"
+    pub default_brightness: u8,                   // 0-100% brightness
+    pub season_weight: f32,                       // 0.0 - 1.0 weight of season color
+
+    // Natural light presets
+    pub morning_r: u8,
+    pub morning_g: u8,
+    pub morning_b: u8,
+    pub morning_ww: u8,
+    pub morning_cw: u8,
+
+    pub noon_r: u8,
+    pub noon_g: u8,
+    pub noon_b: u8,
+    pub noon_ww: u8,
+    pub noon_cw: u8,
+
+    pub evening_r: u8,
+    pub evening_g: u8,
+    pub evening_b: u8,
+    pub evening_ww: u8,
+    pub evening_cw: u8,
+}
+
 //validation logic
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
@@ -78,6 +110,7 @@ impl Config {
         self.db.validate()?;
         self.web.validate()?;
         self.light_control.validate()?;
+        self.led.validate()?;
         Ok(())
     }
 }
@@ -90,29 +123,89 @@ impl MainConfig {
 }
 
 impl GpioConfig {
+    pub fn load() -> Self {
+        let config_str = std::fs::read_to_string("config.toml")
+            .expect("Failed to read config.toml");
+        
+        let config: toml::Value = toml::from_str(&config_str)
+            .expect("Failed to parse config.toml");
+        
+        let gpio = config.get("gpio")
+            .expect("Missing [gpio] section in config.toml");
+        
+        Self {
+            uv_relay1: gpio.get("uv_relay1")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u8)
+                .expect("Missing or invalid uv_relay1 in config"),
+                
+            uv_relay2: gpio.get("uv_relay2")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u8)
+                .expect("Missing or invalid uv_relay2 in config"),
+                
+            heat_relay: gpio.get("heat_relay")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u8)
+                .expect("Missing or invalid heat_relay in config"),
+                
+            led_relay: gpio.get("led_relay")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u8)
+                .expect("Missing or invalid led_relay in config"),
+                
+            ic_count: gpio.get("ic_count")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as usize),
+                
+            ds18b20_bus: gpio.get("ds18b20_bus")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u8),
+                
+            dht22_pin: gpio.get("dht22_pin")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u8),
+            
+            veml6075_uv1: gpio.get("veml6075_uv1")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u8)
+                .expect("Missing or invalid veml6075_uv1 in config"),
+            
+            veml6075_uv2: gpio.get("veml6075_uv2")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u8)
+                .expect("Missing or invalid veml6075_uv2 in config"),
+        }
+    }
+    
     pub fn validate(&self) -> Result<(), String> {
-        // Validate GPIO pins
-        if !(0..=27).contains(&self.ds18b20_bus) {
-            return Err(format!("Invalid GPIO number for ds18b20_bus: {}", self.ds18b20_bus));
+        // Validate GPIO pin numbers
+        if self.uv_relay1 > 27 {
+            return Err(format!("Invalid UV1 relay GPIO pin: {}", self.uv_relay1));
         }
-        if !(0..=27).contains(&self.dht22) {
-            return Err(format!("Invalid GPIO number for dht22: {}", self.dht22));
+        
+        if self.uv_relay2 > 27 {
+            return Err(format!("Invalid UV2 relay GPIO pin: {}", self.uv_relay2));
         }
-        if !(0..=27).contains(&self.veml6075_uv1) {
-            return Err(format!("Invalid GPIO number for veml6075_uv1: {}", self.veml6075_uv1));
+        
+        if self.heat_relay > 27 {
+            return Err(format!("Invalid heat relay GPIO pin: {}", self.heat_relay));
         }
-        if !(0..=27).contains(&self.veml6075_uv2) {
-            return Err(format!("Invalid GPIO number for veml6075_uv2: {}", self.veml6075_uv2));
+        
+        if self.led_relay > 27 {
+            return Err(format!("Invalid LED relay GPIO pin: {}", self.led_relay));
         }
-        if !(0..=27).contains(&self.uv_relay1) {
-            return Err(format!("Invalid GPIO number for uv_relay1: {}", self.uv_relay1));
+        
+        // Check for pin conflicts
+        let pins = vec![self.uv_relay1, self.uv_relay2, self.heat_relay, self.led_relay];
+        for i in 0..pins.len() {
+            for j in i+1..pins.len() {
+                if pins[i] == pins[j] {
+                    return Err(format!("GPIO pin conflict: Pin {} used multiple times", pins[i]));
+                }
+            }
         }
-        if !(0..=27).contains(&self.uv_relay2) {
-            return Err(format!("Invalid GPIO number for uv_relay2: {}", self.uv_relay2));
-        }
-        if !(0..=27).contains(&self.heat_relay) {
-            return Err(format!("Invalid GPIO number for heat_relay: {}", self.heat_relay));
-        }        
+        
         Ok(())
     }
 }
@@ -191,6 +284,39 @@ impl WebConfig {
             return Err("Invalid port number".to_string());
         }
 
+        Ok(())
+    }
+}
+
+impl GetDataConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.retry == 0 {
+            return Err("Retry count must be at least 1".into());
+        }
+        
+        if let Some(interval) = self.interval {
+            if interval < 10 {
+                return Err(format!("Interval must be at least 10 seconds (got {})", interval));
+            }
+        }
+        
+        if let Some(days) = self.storage_days {
+            if days < 1 {
+                return Err(format!("Storage days must be at least 1 (got {})", days));
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+impl LedConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        // Validate weight is between 0 and 1
+        if self.season_weight < 0.0 || self.season_weight > 1.0 {
+            return Err(format!("Season weight must be between 0.0 and 1.0, got: {}", self.season_weight));
+        }
+        
         Ok(())
     }
 }
