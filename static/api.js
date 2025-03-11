@@ -27,17 +27,6 @@ class TerrariumAPI {
         return response.ok;
     }
 
-    static async updateRGBOverride(settings) {
-        const response = await fetch(`${API_BASE_URL}/override`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(settings),
-        });
-        return response.ok;
-    }
-    
     // New methods for log and data functionality
     static async getLogEntries(filter = 'all', limit = 50) {
         const response = await fetch(`${API_BASE_URL}/logs?filter=${filter}&limit=${limit}`);
@@ -142,27 +131,6 @@ async function initializeCharts() {
         console.error('Failed to initialize charts:', error);
     }
 }
-
-// Handle RGB override form
-document.getElementById('rgbForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    
-    try {
-        await TerrariumAPI.updateRGBOverride({
-            override: formData.get('override') === 'true',
-            red: parseInt(formData.get('red')),
-            green: parseInt(formData.get('green')),
-            blue: parseInt(formData.get('blue')),
-            warmWhite: parseInt(formData.get('wwhite')),
-            coolWhite: parseInt(formData.get('cwhite')),
-        });
-        alert('RGB override values updated successfully');
-    } catch (error) {
-        alert('Failed to update RGB settings');
-        console.error(error);
-    }
-});
 
 // schedule.js
 async function loadScheduleData() {

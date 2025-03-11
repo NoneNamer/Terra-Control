@@ -142,6 +142,31 @@
             <h3>Current Light Preview</h3>
             <div id="lightPreview" class="light-preview"></div>
         </div>
+
+        <div class="led-control-section">
+            <h3>Natural Light Cycle Preview</h3>
+            <p>This shows how the light will change throughout the day when natural light mode is enabled.</p>
+            <div class="time-slider-container">
+                <label for="timeSlider">Time of Day:</label>
+                <input type="range" id="timeSlider" min="0" max="24" step="0.5" value="12">
+                <span id="timeValue">12:00</span>
+            </div>
+            <div id="cycleLightPreview" class="light-preview"></div>
+            <div class="cycle-preview-container">
+                <div class="cycle-preview-time">
+                    <div class="cycle-preview-label">Morning</div>
+                    <div class="cycle-preview-box" id="morningPreview"></div>
+                </div>
+                <div class="cycle-preview-time">
+                    <div class="cycle-preview-label">Noon</div>
+                    <div class="cycle-preview-box" id="noonPreview"></div>
+                </div>
+                <div class="cycle-preview-time">
+                    <div class="cycle-preview-label">Evening</div>
+                    <div class="cycle-preview-box" id="eveningPreview"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -383,15 +408,234 @@
             setNaturalLightSettings(!document.getElementById('override').checked, 
                                    parseFloat(document.getElementById('seasonWeight').value));
             
-            // TODO: Add API endpoint to save the natural light presets
-            alert('Natural light settings saved. Note: Preset values are not yet implemented in the backend.');
+            // Save the natural light presets
+            saveNaturalLightPresets();
         });
+
+        // Fetch natural light presets
+        async function fetchNaturalLightPresets() {
+            try {
+                const response = await fetch('/api/led/presets');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Update the form with the presets
+                document.getElementById('morningRed').value = data.morning_r;
+                document.getElementById('morningGreen').value = data.morning_g;
+                document.getElementById('morningBlue').value = data.morning_b;
+                document.getElementById('morningWW').value = data.morning_ww;
+                document.getElementById('morningCW').value = data.morning_cw;
+                
+                document.getElementById('noonRed').value = data.noon_r;
+                document.getElementById('noonGreen').value = data.noon_g;
+                document.getElementById('noonBlue').value = data.noon_b;
+                document.getElementById('noonWW').value = data.noon_ww;
+                document.getElementById('noonCW').value = data.noon_cw;
+                
+                document.getElementById('eveningRed').value = data.evening_r;
+                document.getElementById('eveningGreen').value = data.evening_g;
+                document.getElementById('eveningBlue').value = data.evening_b;
+                document.getElementById('eveningWW').value = data.evening_ww;
+                document.getElementById('eveningCW').value = data.evening_cw;
+                
+                // Update the value displays
+                document.getElementById('morningRedValue').textContent = data.morning_r;
+                document.getElementById('morningGreenValue').textContent = data.morning_g;
+                document.getElementById('morningBlueValue').textContent = data.morning_b;
+                document.getElementById('morningWWValue').textContent = data.morning_ww;
+                document.getElementById('morningCWValue').textContent = data.morning_cw;
+                
+                document.getElementById('noonRedValue').textContent = data.noon_r;
+                document.getElementById('noonGreenValue').textContent = data.noon_g;
+                document.getElementById('noonBlueValue').textContent = data.noon_b;
+                document.getElementById('noonWWValue').textContent = data.noon_ww;
+                document.getElementById('noonCWValue').textContent = data.noon_cw;
+                
+                document.getElementById('eveningRedValue').textContent = data.evening_r;
+                document.getElementById('eveningGreenValue').textContent = data.evening_g;
+                document.getElementById('eveningBlueValue').textContent = data.evening_b;
+                document.getElementById('eveningWWValue').textContent = data.evening_ww;
+                document.getElementById('eveningCWValue').textContent = data.evening_cw;
+                
+            } catch (error) {
+                console.error('Error fetching natural light presets:', error);
+            }
+        }
+
+        // Save natural light presets
+        async function saveNaturalLightPresets() {
+            try {
+                const response = await fetch('/api/led/presets', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        morning_r: parseInt(document.getElementById('morningRed').value),
+                        morning_g: parseInt(document.getElementById('morningGreen').value),
+                        morning_b: parseInt(document.getElementById('morningBlue').value),
+                        morning_ww: parseInt(document.getElementById('morningWW').value),
+                        morning_cw: parseInt(document.getElementById('morningCW').value),
+                        noon_r: parseInt(document.getElementById('noonRed').value),
+                        noon_g: parseInt(document.getElementById('noonGreen').value),
+                        noon_b: parseInt(document.getElementById('noonBlue').value),
+                        noon_ww: parseInt(document.getElementById('noonWW').value),
+                        noon_cw: parseInt(document.getElementById('noonCW').value),
+                        evening_r: parseInt(document.getElementById('eveningRed').value),
+                        evening_g: parseInt(document.getElementById('eveningGreen').value),
+                        evening_b: parseInt(document.getElementById('eveningBlue').value),
+                        evening_ww: parseInt(document.getElementById('eveningWW').value),
+                        evening_cw: parseInt(document.getElementById('eveningCW').value)
+                    }),
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                console.log('Natural light presets saved successfully');
+                alert('Natural light presets saved successfully');
+                
+            } catch (error) {
+                console.error('Error saving natural light presets:', error);
+                alert('Error saving natural light presets: ' + error.message);
+            }
+        }
 
         // Initial data load
         fetchLEDStatus();
+        fetchNaturalLightPresets().then(() => {
+            // Initialize the natural light cycle preview after presets are loaded
+            updateCycleLightPreview();
+        });
 
         // Set up periodic refresh (every 30 seconds)
         setInterval(fetchLEDStatus, 30000);
+
+        // Update light preview for natural light cycle
+        function updateCycleLightPreview() {
+            // Get the time value from the slider
+            const timeValue = parseFloat(document.getElementById('timeSlider').value);
+            const hours = Math.floor(timeValue);
+            const minutes = (timeValue - hours) * 60;
+            
+            // Format the time string
+            const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+            document.getElementById('timeValue').textContent = timeString;
+            
+            // Get the preset values
+            const morning = {
+                r: parseInt(document.getElementById('morningRed').value),
+                g: parseInt(document.getElementById('morningGreen').value),
+                b: parseInt(document.getElementById('morningBlue').value),
+                ww: parseInt(document.getElementById('morningWW').value),
+                cw: parseInt(document.getElementById('morningCW').value)
+            };
+            
+            const noon = {
+                r: parseInt(document.getElementById('noonRed').value),
+                g: parseInt(document.getElementById('noonGreen').value),
+                b: parseInt(document.getElementById('noonBlue').value),
+                ww: parseInt(document.getElementById('noonWW').value),
+                cw: parseInt(document.getElementById('noonCW').value)
+            };
+            
+            const evening = {
+                r: parseInt(document.getElementById('eveningRed').value),
+                g: parseInt(document.getElementById('eveningGreen').value),
+                b: parseInt(document.getElementById('eveningBlue').value),
+                ww: parseInt(document.getElementById('eveningWW').value),
+                cw: parseInt(document.getElementById('eveningCW').value)
+            };
+            
+            // Update the preset previews
+            updatePresetPreview('morningPreview', morning.r, morning.g, morning.b, morning.ww, morning.cw);
+            updatePresetPreview('noonPreview', noon.r, noon.g, noon.b, noon.ww, noon.cw);
+            updatePresetPreview('eveningPreview', evening.r, evening.g, evening.b, evening.ww, evening.cw);
+            
+            // Define the time ranges
+            const morningTime = 7; // 7:00 AM
+            const noonTime = 12;   // 12:00 PM
+            const eveningTime = 19; // 7:00 PM
+            
+            let r, g, b, ww, cw;
+            
+            // Interpolate between presets based on time
+            if (timeValue >= morningTime && timeValue < noonTime) {
+                // Morning to noon transition
+                const factor = (timeValue - morningTime) / (noonTime - morningTime);
+                r = interpolate(morning.r, noon.r, factor);
+                g = interpolate(morning.g, noon.g, factor);
+                b = interpolate(morning.b, noon.b, factor);
+                ww = interpolate(morning.ww, noon.ww, factor);
+                cw = interpolate(morning.cw, noon.cw, factor);
+            } else if (timeValue >= noonTime && timeValue < eveningTime) {
+                // Noon to evening transition
+                const factor = (timeValue - noonTime) / (eveningTime - noonTime);
+                r = interpolate(noon.r, evening.r, factor);
+                g = interpolate(noon.g, evening.g, factor);
+                b = interpolate(noon.b, evening.b, factor);
+                ww = interpolate(noon.ww, evening.ww, factor);
+                cw = interpolate(noon.cw, evening.cw, factor);
+            } else {
+                // Evening or early morning - use evening preset
+                r = evening.r;
+                g = evening.g;
+                b = evening.b;
+                ww = evening.ww;
+                cw = evening.cw;
+            }
+            
+            // Update the preview
+            updateLightPreviewElement('cycleLightPreview', r, g, b, ww, cw);
+        }
+        
+        // Helper function to interpolate between two values
+        function interpolate(start, end, factor) {
+            return Math.round(start + (end - start) * factor);
+        }
+        
+        // Update a specific light preview element
+        function updateLightPreviewElement(elementId, r, g, b, ww, cw) {
+            const preview = document.getElementById(elementId);
+            
+            // Calculate a simplified representation of the light
+            const rValue = parseInt(r);
+            const gValue = parseInt(g);
+            const bValue = parseInt(b);
+            
+            // Add warm white (yellowish) and cool white (blueish) approximations
+            const wwValue = parseInt(ww);
+            const cwValue = parseInt(cw);
+            
+            // Warm white adds to red and green (yellowish)
+            const finalR = Math.min(255, rValue + wwValue * 0.8);
+            const finalG = Math.min(255, gValue + wwValue * 0.6 + cwValue * 0.5);
+            const finalB = Math.min(255, bValue + cwValue * 0.9);
+            
+            preview.style.backgroundColor = `rgb(${finalR}, ${finalG}, ${finalB})`;
+        }
+        
+        // Update preset preview
+        function updatePresetPreview(elementId, r, g, b, ww, cw) {
+            updateLightPreviewElement(elementId, r, g, b, ww, cw);
+        }
+        
+        // Update the main light preview
+        function updateLightPreview(r, g, b, ww, cw) {
+            updateLightPreviewElement('lightPreview', r, g, b, ww, cw);
+        }
+
+        // Add time slider event listener
+        document.getElementById('timeSlider').addEventListener('input', updateCycleLightPreview);
+        
+        // Add event listeners to update cycle preview when natural light settings change
+        naturalLightSliders.forEach(sliderId => {
+            document.getElementById(sliderId).addEventListener('input', updateCycleLightPreview);
+        });
     </script>
 </body>
 </html> 
