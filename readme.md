@@ -34,7 +34,7 @@ The system manages lighting, heating, and environmental conditions while providi
 - Power Management:
   - Mean Well RD-65b power supply
   - Phillips HID-PV C 70 ballast
-- Relay board for controlling heating elements and UV lighting
+- Relay board for controlling heating elements, UV lighting and LED power supply
 
 
 ## Project Structure
@@ -49,10 +49,11 @@ The system manages lighting, heating, and environmental conditions while providi
 │   ├── config.rs       # Handles loading from config.toml
 │   ├── gpio.rs         # GPIO out module
 │   ├── getData.rs      # Sensor reading logic
-│   ├── schedule.rs     # SQLite DB schedule handling
+│   ├── storage.rs      # SQLite DB schedule handling
 │   ├── lightControl.rs # UV and heatspot control
 │   ├── ledStrip.rs     # LED lighting control
 │   ├── display.rs      # Display control
+│   ├── logs.rs         # Log managemant module
 │   ├── web.rs          # Web server logic
 │   └── cam.rs          # Camera handling logic
 ├── /logs               # Log files directory
