@@ -1,5 +1,5 @@
 1. **Network**:
-   - Implement JWT or similar token-based authentication for the web and camera servers
+   - Implement Token-based authentication for the web and camera servers
    - Use HTTPS with proper certificates instead of plain HTTP
    - Create IPv6 only Mode
 
@@ -52,3 +52,14 @@
    - Build Dockerfile
    - Check Raspberry Pi settings
    - Build Binary
+
+12. **Assembly**:
+   - Build missing sensor fixtures
+   - Design PCB 
+   - Finish power supply box
+   - Wiring
+   - Design Lid
+
+13. **Testing**:
+   - Test Run
+   - Debugging
