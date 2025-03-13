@@ -2,7 +2,20 @@ use sqlx::SqlitePool;
 use std::error::Error;
 use sqlx::sqlite::SqlitePoolOptions;
 
-// Initialize the database connection and create tables if they don't exist
+/// Initializes the SQLite database connection and sets up required tables.
+///
+/// This function:
+/// 1. Creates a connection pool to the SQLite database
+/// 2. Creates all necessary tables if they don't exist, including:
+///    - Schedule table for lighting schedules
+///    - Sensor data table for historical readings
+///    - Log table for system events
+///    - LED settings table for LED strip configuration
+///    - Overrides table for manual control overrides
+///
+/// # Returns
+///
+/// A Result containing either the SQLite connection pool or an error
 pub async fn initialize_db() -> Result<SqlitePool, Box<dyn Error>> {
     let pool = SqlitePoolOptions::new()
         .max_connections(5)

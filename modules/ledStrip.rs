@@ -5,14 +5,20 @@ use crate::modules::gpio::{LEDStrip, RGBWW, RelayController, RelayType};
 use crate::modules::config::Config;
 use chrono::{Local, NaiveTime};
 
-/// Controls the LED strip with power management via relay
+/// Controls the LED strip with power management via relay.
+///
+/// This struct manages an LED strip with RGBWW (Red, Green, Blue, Warm White, Cool White)
+/// capabilities, with power control through a relay to save energy when LEDs are not in use.
 pub struct LEDController {
     led_strip: Option<LEDStrip>,
     relay_controller: Arc<Mutex<RelayController>>,
     power_state: bool,
 }
 
-// Natural light presets for different times of day
+/// Natural light presets for different times of day.
+///
+/// Represents a specific color configuration for the LED strip that mimics
+/// natural lighting conditions at different times of day (morning, noon, evening).
 #[derive(Clone, Copy)]
 pub struct LightPreset {
     r: u8,
@@ -23,11 +29,32 @@ pub struct LightPreset {
 }
 
 impl LightPreset {
+    /// Creates a new LightPreset with specified RGBWW values.
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - Red component (0-255)
+    /// * `g` - Green component (0-255)
+    /// * `b` - Blue component (0-255)
+    /// * `ww` - Warm white component (0-255)
+    /// * `cw` - Cool white component (0-255)
+    ///
+    /// # Returns
+    ///
+    /// A new LightPreset with the specified values
     fn new(r: u8, g: u8, b: u8, ww: u8, cw: u8) -> Self {
         Self { r, g, b, ww, cw }
     }
     
-    // Create preset from config
+    /// Creates a morning light preset from configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The application configuration containing light settings
+    ///
+    /// # Returns
+    ///
+    /// A LightPreset with morning lighting values
     fn from_config_morning(config: &Config) -> Self {
         Self {
             r: config.led.morning_r,
@@ -38,6 +65,15 @@ impl LightPreset {
         }
     }
     
+    /// Creates a noon light preset from configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The application configuration containing light settings
+    ///
+    /// # Returns
+    ///
+    /// A LightPreset with noon lighting values
     fn from_config_noon(config: &Config) -> Self {
         Self {
             r: config.led.noon_r,
@@ -48,6 +84,15 @@ impl LightPreset {
         }
     }
     
+    /// Creates an evening light preset from configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The application configuration containing light settings
+    ///
+    /// # Returns
+    ///
+    /// A LightPreset with evening lighting values
     fn from_config_evening(config: &Config) -> Self {
         Self {
             r: config.led.evening_r,
@@ -58,7 +103,19 @@ impl LightPreset {
         }
     }
     
-    // Interpolate between two presets based on a factor from 0.0 to 1.0
+    /// Interpolates between two light presets by a given factor.
+    ///
+    /// Used to smoothly transition between lighting conditions (e.g., morning to noon).
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The target preset to interpolate towards
+    /// * `factor` - A value between 0.0 and 1.0 that determines how far to interpolate
+    ///              (0.0 = this preset, 1.0 = other preset)
+    ///
+    /// # Returns
+    ///
+    /// A new LightPreset representing the interpolated values
     fn interpolate(&self, other: &LightPreset, factor: f32) -> Self {
         let factor = factor.clamp(0.0, 1.0);
         let r = self.r as f32 * (1.0 - factor) + other.r as f32 * factor;
@@ -76,7 +133,11 @@ impl LightPreset {
         }
     }
     
-    // Convert to RGBWW
+    /// Converts the preset to an RGBWW struct for use with the LED controller.
+    ///
+    /// # Returns
+    ///
+    /// An RGBWW struct with the preset's color values
     fn to_rgbww(&self) -> RGBWW {
         RGBWW {
             r: self.r,
@@ -94,7 +155,15 @@ const NOON_PRESET: LightPreset = LightPreset { r: 255, g: 240, b: 220, ww: 50, c
 const EVENING_PRESET: LightPreset = LightPreset { r: 255, g: 140, b: 50, ww: 255, cw: 0 };
 
 impl LEDController {
-    /// Create a new LED controller with the given relay controller
+    /// Creates a new LED controller with power management.
+    ///
+    /// # Arguments
+    ///
+    /// * `relay_controller` - Reference to the relay controller for power management
+    ///
+    /// # Returns
+    ///
+    /// A new LEDController instance
     pub fn new(relay_controller: Arc<Mutex<RelayController>>) -> Self {
         Self {
             led_strip: None,
@@ -103,7 +172,13 @@ impl LEDController {
         }
     }
 
-    /// Initialize the LED strip (powers on the relay first)
+    /// Initializes the LED controller.
+    ///
+    /// Sets up the LED strip and ensures it's in a known state.
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
     pub async fn initialize(&mut self) -> Result<(), Box<dyn Error>> {
         // First, turn on the power relay
         self.power_on().await?;
@@ -117,7 +192,13 @@ impl LEDController {
         Ok(())
     }
 
-    /// Power on the LED strip via relay
+    /// Powers on the LED strip via relay.
+    ///
+    /// Turns on power to the LED strip and waits for it to initialize.
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
     pub async fn power_on(&mut self) -> Result<(), Box<dyn Error>> {
         let mut relay = self.relay_controller.lock().await;
         relay.turn_on(RelayType::LED);
@@ -125,7 +206,13 @@ impl LEDController {
         Ok(())
     }
 
-    /// Power off the LED strip via relay
+    /// Powers off the LED strip via relay.
+    ///
+    /// Turns off power to the LED strip to save energy when not in use.
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
     pub async fn power_off(&mut self) -> Result<(), Box<dyn Error>> {
         // First turn off all LEDs if the strip is initialized
         if let Some(ref mut strip) = self.led_strip {
@@ -141,7 +228,17 @@ impl LEDController {
         Ok(())
     }
 
-    /// Set all LEDs to the specified color
+    /// Sets the LED strip color.
+    ///
+    /// Powers on the strip if needed and sets the specified color.
+    ///
+    /// # Arguments
+    ///
+    /// * `color` - The RGBWW color to set
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
     pub async fn set_color(&mut self, color: RGBWW) -> Result<(), Box<dyn Error>> {
         // If the strip is powered off, power it on first
         if !self.power_state {
@@ -164,25 +261,66 @@ impl LEDController {
         Ok(())
     }
 
-    /// Set the color from RGB and warm/cool white values
+    /// Sets the LED color components individually.
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - Red component (0-255)
+    /// * `g` - Green component (0-255)
+    /// * `b` - Blue component (0-255)
+    /// * `ww` - Warm white component (0-255)
+    /// * `cw` - Cool white component (0-255)
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
     pub async fn set_rgbww(&mut self, r: u8, g: u8, b: u8, ww: u8, cw: u8) -> Result<(), Box<dyn Error>> {
         let color = RGBWW { r, g, b, ww, cw };
         self.set_color(color).await
     }
 
-    /// Set the color from a string in format "R,G,B,WW,CW"
+    /// Sets the LED color from a string representation.
+    ///
+    /// # Arguments
+    ///
+    /// * `color_str` - A string in the format "r,g,b,ww,cw"
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
     pub async fn set_color_from_str(&mut self, color_str: &str) -> Result<(), Box<dyn Error>> {
         let color = RGBWW::from_str(color_str)?;
         self.set_color(color).await
     }
 
-    /// Check if the LED strip is powered on
+    /// Checks if the LED strip is currently powered on.
+    ///
+    /// # Returns
+    ///
+    /// True if powered on, False otherwise
     pub fn is_powered_on(&self) -> bool {
         self.power_state
     }
 }
 
-/// Calculate natural light color based on time of day and season
+/// Calculates a natural light color based on the time of day.
+///
+/// This function interpolates between morning, noon, and evening light presets
+/// based on the current time, and also factors in seasonal variations.
+///
+/// # Arguments
+///
+/// * `current_time` - The current time in 24-hour format (HH:MM)
+/// * `morning_time` - The morning time in 24-hour format (HH:MM)
+/// * `noon_time` - The noon time in 24-hour format (HH:MM)
+/// * `evening_time` - The evening time in 24-hour format (HH:MM)
+/// * `season_color` - A tuple of (r,g,b,ww,cw) representing seasonal color adjustment
+/// * `season_weight` - A factor (0.0-1.0) for how strongly to apply seasonal adjustment
+/// * `config` - The application configuration
+///
+/// # Returns
+///
+/// A Result containing a tuple of (r,g,b,ww,cw) representing the calculated color
 pub fn calculate_natural_light(
     current_time: &str,
     morning_time: &str,
@@ -251,7 +389,23 @@ pub fn calculate_natural_light(
     ))
 }
 
-/// Update the LED strip based on schedule or manual settings
+/// Updates the LED strip based on schedule and database settings.
+///
+/// This function is called periodically to:
+/// 1. Check the current time against the configured schedule
+/// 2. Retrieve manual settings from the database
+/// 3. Calculate the appropriate colors for the current time of day
+/// 4. Update the LED strip or power it off during night hours
+///
+/// # Arguments
+///
+/// * `db_pool` - Database connection for retrieving settings
+/// * `led_controller` - Reference to the LED controller
+/// * `config` - Application configuration
+///
+/// # Returns
+///
+/// A Result indicating success or an error
 pub async fn update_leds(
     db_pool: &rusqlite::Connection,
     led_controller: &Arc<Mutex<LEDController>>,
@@ -362,7 +516,16 @@ pub async fn update_leds(
     Ok(())
 }
 
-/// Get LED settings from the database or use defaults from config
+/// Retrieves LED settings from the database.
+///
+/// # Arguments
+///
+/// * `db` - Database connection
+/// * `config` - Application configuration
+///
+/// # Returns
+///
+/// A Result containing a tuple of (r,g,b,ww,cw,enabled) settings
 fn get_led_settings(
     db: &rusqlite::Connection,
     config: &Config

@@ -9,7 +9,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use log::{info, warn};
 
-// Structure for the light controller with overheat protection
+/// Structure for the light controller with overheat protection.
+///
+/// This struct manages the UV lights and heat lamp for the terrarium,
+/// including safety features that prevent dangerous overheating conditions.
 pub struct LightController {
     uv1: OutputPin,
     uv2: OutputPin,
@@ -23,6 +26,19 @@ pub struct LightController {
 
 //gpio logic with overheat protection
 impl LightController {
+    /// Creates a new LightController with the specified configuration.
+    ///
+    /// Initializes GPIO pins for controlling UV lights and heat lamp,
+    /// and sets up overheat protection parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for the light controller containing
+    ///              pin assignments and safety thresholds
+    ///
+    /// # Returns
+    ///
+    /// A Result containing either the new LightController or an error
     pub fn new(config: LightControlConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let gpio = Gpio::new()?;
         Ok(LightController {
@@ -30,13 +46,18 @@ impl LightController {
             uv2: gpio.get(config.uv_relay2)?.into_output(),
             heat: gpio.get(config.heat_relay)?.into_output(),
             overheat_temp: config.overheat_temp,
-            overheat_time: Duration::from_secs(config.overheat_time),
+            overheat_time: Duration::from_secs(config.overheat_cooldown_seconds as u64),
             last_overheat: None,
             current_temp: 0.0,
             is_overheating: AtomicBool::new(false),
         })
     }
 
+    /// Controls the first UV light.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - True to turn on, False to turn off
     pub fn set_uv1(&mut self, state: bool) {
         if state {
             self.uv1.set_high();
@@ -45,6 +66,11 @@ impl LightController {
         }
     }
 
+    /// Controls the second UV light.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - True to turn on, False to turn off
     pub fn set_uv2(&mut self, state: bool) {
         if state {
             self.uv2.set_high();
@@ -53,7 +79,16 @@ impl LightController {
         }
     }
 
-    // Control heat with overheat protection
+    /// Safely controls the heat lamp with overheat protection.
+    ///
+    /// This method will:
+    /// 1. Check if the system is in an overheat condition
+    /// 2. If overheating, it will block attempts to turn on the heat lamp
+    /// 3. Update the overheat state based on current temperature and cooldown
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - True to turn on, False to turn off
     pub fn control_heat(&mut self, state: bool) {
         // Check for overheat condition
         if self.current_temp >= self.overheat_temp as f32 {
@@ -93,7 +128,11 @@ impl LightController {
         }
     }
     
-    // Set heat directly (internal use only)
+    /// Internal function to directly control the heat lamp relay.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - True to turn on, False to turn off
     fn set_heat(&mut self, state: bool) {
         if state {
             self.heat.set_high();
@@ -102,7 +141,14 @@ impl LightController {
         }
     }
     
-    // Update the current temperature (called from getData)
+    /// Updates the current temperature reading and checks for overheat conditions.
+    ///
+    /// This method is called periodically with new temperature readings and
+    /// will trigger overheat protection if the temperature exceeds safe limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `temp` - The current temperature from the sensor
     pub fn update_temperature(&mut self, temp: f32) {
         self.current_temp = temp;
         
@@ -114,17 +160,29 @@ impl LightController {
         }
     }
     
-    // Check if the system is currently in overheat state
+    /// Checks if the system is currently in an overheat state.
+    ///
+    /// # Returns
+    ///
+    /// True if the system is overheating, False otherwise
     pub fn is_overheating(&self) -> bool {
         self.is_overheating.load(Ordering::SeqCst)
     }
     
-    // Get current temperature
+    /// Gets the current temperature reading.
+    ///
+    /// # Returns
+    ///
+    /// The most recent temperature reading in degrees
     pub fn get_temperature(&self) -> f32 {
         self.current_temp
     }
     
-    // Get overheat time remaining (in seconds), if any
+    /// Gets the remaining time in the overheat cooldown period.
+    ///
+    /// # Returns
+    ///
+    /// Some(seconds) if in cooldown, None if not in cooldown
     pub fn get_overheat_cooldown_remaining(&self) -> Option<u64> {
         self.last_overheat.map(|time| {
             let elapsed = time.elapsed();
@@ -137,7 +195,23 @@ impl LightController {
     }
 }
 
-// Function to update lights based on schedule and sensor data
+/// Updates the light control system based on schedule and current settings.
+///
+/// This function is called periodically to:
+/// 1. Check the current time against the configured schedule
+/// 2. Check the database for manual overrides
+/// 3. Update UV lights and heat lamp accordingly
+/// 4. Handle safety conditions like overheat protection
+///
+/// # Arguments
+///
+/// * `db` - Database connection for retrieving settings
+/// * `light_controller` - Reference to the light controller
+/// * `config` - Application configuration containing schedules
+///
+/// # Returns
+///
+/// A Result indicating success or an error
 pub async fn update_lights(
     db: &rusqlite::Connection,
     light_controller: &Arc<tokio::sync::Mutex<LightController>>,
@@ -186,7 +260,17 @@ pub async fn update_lights(
     Ok(())
 }
 
-// Helper function to check if a time is between two other times
+/// Checks if the current time is between two specified times.
+///
+/// # Arguments
+///
+/// * `time` - The time to check
+/// * `start` - The start time in 24-hour format (HH:MM)
+/// * `end` - The end time in 24-hour format (HH:MM)
+///
+/// # Returns
+///
+/// True if the time is between start and end, False otherwise
 fn is_time_between(time: &str, start: &str, end: &str) -> bool {
     time >= start && time <= end
 }

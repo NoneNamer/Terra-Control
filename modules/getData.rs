@@ -11,7 +11,8 @@ use crate::modules::lightControl::LightController;
 use crate::modules::logs;
 use std::error::Error;
 
-// Structure to store the most recent sensor readings
+/// Structure to store the most recent sensor readings from all sensors.
+/// Used to provide real-time data to the web interface and control systems.
 pub struct CurrentReadings {
     pub timestamp: DateTime<Utc>,
     pub basking_temp: f32,
@@ -20,10 +21,16 @@ pub struct CurrentReadings {
     pub humidity: f32,
     pub uv_1: f32,
     pub uv_2: f32,
-
 }
 
 impl CurrentReadings {
+    /// Creates a new CurrentReadings instance with default values.
+    ///
+    /// Initializes all sensor readings to 0.0 and sets the timestamp to the current time.
+    ///
+    /// # Returns
+    ///
+    /// A new CurrentReadings instance with default values.
     pub fn new() -> Self {
         Self {
             timestamp: Utc::now(),
@@ -37,7 +44,18 @@ impl CurrentReadings {
     }
 }
 
-// Reads all sensors and returns the readings
+/// Reads all sensors in the terrarium and returns the current readings.
+///
+/// This function polls all connected sensors (temperature, humidity, UV) 
+/// with configured retry attempts if any reading fails.
+///
+/// # Arguments
+///
+/// * `config` - The application configuration containing sensor settings
+///
+/// # Returns
+///
+/// A CurrentReadings struct containing all sensor values and the current timestamp
 pub async fn read_all_sensors(config: &Config) -> CurrentReadings {
     let timestamp = Utc::now();
 
@@ -83,7 +101,24 @@ pub async fn read_all_sensors(config: &Config) -> CurrentReadings {
     readings
 }
 
-// Process and store sensor readings
+/// Collects sensor data, updates the current readings, and logs values to the database.
+///
+/// This function is called periodically to:
+/// 1. Read all sensor values
+/// 2. Update the shared current readings state
+/// 3. Update the temperature in the light controller (for overheat protection)
+/// 4. Save the readings to the database for historical tracking
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `current_readings` - Shared mutex containing the current sensor readings
+/// * `config` - Application configuration
+/// * `light_controller` - Reference to the light controller for temperature updates
+///
+/// # Returns
+///
+/// Returns nothing. Logs errors if sensor reading or database operations fail.
 pub async fn read_sensors(
     pool: &PgPool, 
     current_readings: &Arc<Mutex<CurrentReadings>>, 
@@ -141,7 +176,16 @@ pub async fn read_sensors(
     }
 }
 
-// Save readings to database
+/// Saves sensor readings to the database for historical tracking.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `readings` - The sensor readings to save
+///
+/// # Returns
+///
+/// A Result indicating success or a database error
 async fn save_readings_to_db(pool: &PgPool, readings: &SensorReadings) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
@@ -163,7 +207,18 @@ async fn save_readings_to_db(pool: &PgPool, readings: &SensorReadings) -> Result
     Ok(())
 }
 
-// Function to start the data collection task
+/// Initializes and starts the background task for collecting sensor data.
+///
+/// This function spawns a tokio task that runs in the background, periodically
+/// collecting sensor data according to the configured interval. It continues
+/// running until the application shuts down.
+///
+/// # Arguments
+///
+/// * `db_pool` - Database connection pool for storing readings
+/// * `current_readings` - Shared state for storing the most recent readings
+/// * `config` - Application configuration
+/// * `light_controller` - Light controller for temperature monitoring
 pub async fn start_data_collection(
     db_pool: Arc<PgPool>,
     current_readings: Arc<Mutex<CurrentReadings>>,
@@ -196,7 +251,18 @@ pub async fn start_data_collection(
     });
 }
 
-// Get the most recent readings without accessing the database
+/// Retrieves the most recent sensor readings from shared state.
+///
+/// This function is used by the web interface to get the current sensor values
+/// without having to directly poll the sensors.
+///
+/// # Arguments
+///
+/// * `readings` - Shared mutex containing the current readings
+///
+/// # Returns
+///
+/// A copy of the current readings
 pub async fn get_current_readings(readings: &Arc<Mutex<CurrentReadings>>) -> CurrentReadings {
     let current = readings.lock().await;
     CurrentReadings {
@@ -210,7 +276,15 @@ pub async fn get_current_readings(readings: &Arc<Mutex<CurrentReadings>>) -> Cur
     }
 }
 
-// Get the current overheat status from light controller
+/// Checks if the system is currently in an overheat state.
+///
+/// # Arguments
+///
+/// * `light_controller` - Reference to the light controller
+///
+/// # Returns
+///
+/// Boolean indicating whether the system is overheating
 pub async fn get_overheat_status(light_controller: &Arc<Mutex<LightController>>) -> bool {
     if let Ok(light_ctrl) = light_controller.try_lock() {
         light_ctrl.is_overheating()
@@ -219,7 +293,24 @@ pub async fn get_overheat_status(light_controller: &Arc<Mutex<LightController>>)
     }
 }
 
-// Retry a function multiple times
+/// Retries a fallible operation a specified number of times.
+///
+/// This utility function attempts to execute an operation that might fail,
+/// retrying up to the specified number of times with a short delay between attempts.
+///
+/// # Type Parameters
+///
+/// * `F` - A function that returns an Option<T>
+/// * `T` - The return type of the function
+///
+/// # Arguments
+///
+/// * `f` - The function to retry
+/// * `retries` - The number of retry attempts
+///
+/// # Returns
+///
+/// The result of the function if successful, or None if all attempts fail
 async fn retry<F, T>(mut f: F, retries: u8) -> Option<T>
 where
     F: FnMut() -> Option<T>,
@@ -240,7 +331,14 @@ where
     None
 }
 
-// Safely shut down all sensors and connections
+/// Performs a safe shutdown of the data collection system.
+///
+/// This function ensures that any pending data is saved and resources
+/// are properly released before the application exits.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
 pub async fn shutdown_safely(pool: &PgPool) {
     // Log shutdown
     if let Err(e) = logs::log(pool, "INFO", "Shutting down data collection").await {
@@ -260,7 +358,20 @@ pub async fn shutdown_safely(pool: &PgPool) {
     info!("Sensor monitoring shutdown complete");
 }
 
-// Function to collect and store sensor data
+/// Internal function to handle the data collection process.
+///
+/// This function is called by the background task to read sensors and handle errors.
+///
+/// # Arguments
+///
+/// * `db_pool` - Database connection pool
+/// * `current_readings` - Shared state for current readings
+/// * `config` - Application configuration
+/// * `light_controller` - Light controller for temperature updates
+///
+/// # Returns
+///
+/// Result indicating success or providing an error
 async fn collect_data(
     db_pool: &PgPool,
     current_readings: &Arc<Mutex<CurrentReadings>>,

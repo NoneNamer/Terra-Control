@@ -119,49 +119,103 @@ impl CameraController {
     }
 }
 
-/// Singleton camera controller wrapped in Arc<Mutex<>>
+/// Thread-safe service for managing the Raspberry Pi camera.
+///
+/// This service provides a high-level interface for camera operations, with
+/// thread-safe access to the underlying camera controller. It's designed to be
+/// shared across multiple asynchronous tasks that need to access the camera.
 pub struct CameraService {
     controller: Arc<Mutex<CameraController>>,
 }
 
 impl CameraService {
-    /// Create a new camera service
+    /// Creates a new CameraService with default settings.
+    ///
+    /// The camera is not initialized immediately and will need to be initialized
+    /// before use by calling the `initialize` method.
+    ///
+    /// # Returns
+    ///
+    /// A new CameraService instance
     pub fn new() -> Self {
         Self {
             controller: Arc::new(Mutex::new(CameraController::new())),
         }
     }
-
-    /// Get the camera controller
+    
+    /// Gets the underlying camera controller.
+    ///
+    /// This is primarily for internal use by other components that
+    /// need direct access to the controller.
+    ///
+    /// # Returns
+    ///
+    /// A reference-counted pointer to the mutex-protected camera controller
     pub fn get_controller(&self) -> Arc<Mutex<CameraController>> {
-        Arc::clone(&self.controller)
+        self.controller.clone()
     }
-
-    /// Initialize the camera
+    
+    /// Initializes the camera hardware.
+    ///
+    /// This must be called before taking snapshots or video. It initializes
+    /// the camera with the configured settings.
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an initialization error
     pub async fn initialize(&self) -> Result<(), CameraError> {
         let mut controller = self.controller.lock().await;
         controller.initialize()
     }
-
-    /// Take a snapshot
+    
+    /// Takes a snapshot and returns it as a JPEG image.
+    ///
+    /// This function captures an image from the camera and returns it
+    /// as a JPEG-encoded byte vector.
+    ///
+    /// # Returns
+    ///
+    /// A Result containing either the JPEG image data or an error
     pub async fn take_snapshot(&self) -> Result<Vec<u8>, CameraError> {
         let mut controller = self.controller.lock().await;
         controller.take_snapshot()
     }
-
-    /// Check if a camera is available
+    
+    /// Checks if a camera is physically connected and available.
+    ///
+    /// This is a static method that detects if the system has a compatible
+    /// camera attached, without actually initializing it.
+    ///
+    /// # Returns
+    ///
+    /// True if a camera is available, False otherwise
     pub fn is_camera_available() -> bool {
         CameraController::is_camera_available()
     }
     
-    /// Check if the camera service is initialized
+    /// Checks if the camera has been successfully initialized.
+    ///
+    /// # Returns
+    ///
+    /// True if the camera is initialized and ready for use, False otherwise
     pub async fn is_initialized(&self) -> bool {
         let controller = self.controller.lock().await;
         controller.is_initialized()
     }
 }
 
-/// Convert raw camera frame to JPEG format
+/// Converts a raw camera frame to a JPEG image.
+///
+/// This utility function takes a raw frame buffer from the camera
+/// and processes it into a JPEG image format suitable for web display.
+///
+/// # Arguments
+///
+/// * `raw_frame` - The raw image data from the camera
+///
+/// # Returns
+///
+/// A Result containing either the JPEG data or a conversion error
 pub fn convert_to_jpeg(raw_frame: &[u8]) -> Result<Vec<u8>, CameraError> {
     // In a real implementation, this would use proper image conversion
     // Here we're creating a simple placeholder image for demonstration

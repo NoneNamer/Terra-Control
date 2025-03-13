@@ -26,6 +26,25 @@ use std::convert::Infallible;
 use tokio_stream::StreamExt;
 use std::time::Duration;
 
+/// Main entry point
+///
+/// This function initializes all the necessary components:
+/// - Loads the configuration from config.toml
+/// - Initializes the database connection
+/// - Sets up the relay controller for device control
+/// - Initializes the light and LED controllers
+/// - Sets up the camera service
+/// - Starts background tasks for:
+///   - Sensor data collection
+///   - Light control based on schedule
+///   - LED control based on schedule
+///   - Camera streaming server
+///   - Web server for the control interface
+///
+/// # Errors
+///
+/// Returns an error if any of the initialization steps fail or if any of the
+/// background tasks encounter an unrecoverable error.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // Load the configuration from the config.toml file
@@ -184,7 +203,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// Function to start the camera stream server with axum
+/// Starts a separate HTTP server dedicated to streaming camera footage.
+/// 
+/// This function creates an Axum server that provides:
+/// - A `/stream` endpoint that sends camera frames as Server-Sent Events (SSE)
+/// - Static file serving from the `./static` directory
+/// 
+/// The server runs on the port specified in the configuration (default: 3030)
+/// and accepts connections from any network interface.
+/// 
+/// # Arguments
+/// 
+/// * `camera_service` - A reference-counted pointer to the camera service
+/// * `config` - A reference-counted pointer to the application configuration
+/// 
+/// # Errors
+/// 
+/// Returns an error if the server fails to bind to the specified address
+/// or encounters any other error during operation.
 async fn start_camera_stream_server(
     camera_service: Arc<CameraService>,
     config: Arc<Config>
@@ -216,7 +252,18 @@ struct CameraStreamState {
     camera_service: Arc<CameraService>,
 }
 
-// Handler for the camera stream route
+/// Handles requests to the camera stream endpoint.
+/// 
+/// This function creates a Server-Sent Events (SSE) stream that sends camera frames
+/// as base64-encoded JPEG images at a rate of approximately 30 frames per second.
+/// 
+/// # Arguments
+/// 
+/// * `State(state)` - The application state containing the camera service
+/// 
+/// # Returns
+/// 
+/// Returns an SSE stream that can be consumed by web clients.
 async fn handle_camera_stream(
     State(state): State<CameraStreamState>,
 ) -> impl IntoResponse {

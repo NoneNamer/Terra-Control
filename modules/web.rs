@@ -25,12 +25,19 @@ use std::path::Path;
 
 // ===== Utility Types =====
 
-/// Custom error type for API responses
+/// Custom error type for API responses.
+///
+/// Provides structured error handling for the web API with appropriate
+/// HTTP status codes and error messages for different error situations.
 #[derive(Debug)]
 pub enum ApiError {
+    /// Internal server error (HTTP 500)
     InternalError(String),
+    /// Resource not found error (HTTP 404)
     NotFound(String),
+    /// Bad request error (HTTP 400)
     BadRequest(String),
+    /// Unauthorized access error (HTTP 401)
     Unauthorized(String),
 }
 
@@ -61,7 +68,17 @@ pub fn map_db_error<E: std::fmt::Display>(err: E) -> ApiError {
 }
 
 // Shared application state
-#[derive(Clone)]
+/// Shared application state for all API handlers.
+///
+/// This struct contains all the shared resources that the API handlers
+/// need to access, including:
+/// - Database connection pool
+/// - Hardware controllers (light, relay, LED)
+/// - Current sensor readings
+/// - Application configuration
+/// - Camera service
+///
+/// It's used with Axum's State extractor to provide handlers access to these resources.
 pub struct AppState {
     db_pool: Arc<SqlitePool>,
     light_controller: Arc<Mutex<LightController>>,
@@ -156,7 +173,31 @@ use handlers::monitoring::*;
 use handlers::system::*;
 use handlers::camera::*;
 
-/// Main function to create the Axum router with all routes
+/// Creates the main application router with all API endpoints.
+///
+/// This function sets up all the routes for the web interface and API, including:
+/// - LED control endpoints
+/// - Schedule management
+/// - System monitoring and status
+/// - Sensor data access
+/// - Camera stream management
+///
+/// It also configures static file serving for the web UI and sets up
+/// CORS headers to allow browser access.
+///
+/// # Arguments
+///
+/// * `db_pool` - Database connection pool
+/// * `light_controller` - Reference to the light controller
+/// * `relay_controller` - Reference to the relay controller
+/// * `led_controller` - Reference to the LED controller
+/// * `current_readings` - Shared state for current sensor readings
+/// * `config` - Application configuration
+/// * `camera_service` - Camera service for snapshots and streaming
+///
+/// # Returns
+///
+/// An Axum Router configured with all application routes and middleware
 pub async fn create_router(
     db_pool: &SqlitePool,
     light_controller: Arc<Mutex<LightController>>,
