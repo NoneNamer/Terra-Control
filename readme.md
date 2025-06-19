@@ -1,4 +1,4 @@
-# Terrarium Controller WIP
+# Terrarium Controller WIP minimal version
 
 ## Overview
 
@@ -13,13 +13,10 @@ The system manages lighting, heating, and environmental conditions while providi
 
 - **Monitoring**
   - Temperature and humidity tracking from multiple sensors
-  - UV level monitoring with dual sensors
-  - Real-time data logging and historical data analysis
+  - Real-time data logging
   
 - **User Interface**
   - Web interface for configuration and monitoring
-  - Live camera stream for remote observation
-  - OLED display for local status at a glance
   - Mobile-friendly responsive design
 
 ## Hardware Requirements
@@ -28,9 +25,7 @@ The system manages lighting, heating, and environmental conditions while providi
 - Temperature Sensors:
   - DS18B20 temperature sensors (×2)
   - DHT22 temperature and humidity sensor
-- VEML6075 UV sensors (×2)
 - WS2805 LED strip for ambient lighting
-- Display: SSD1306 or SH1106 OLED Display
 - Power Management:
   - Mean Well RD-65b power supply
   - Phillips HID-PV C 70 ballast
@@ -52,10 +47,8 @@ The system manages lighting, heating, and environmental conditions while providi
 │   ├── storage.rs      # SQLite DB schedule handling
 │   ├── lightControl.rs # UV and heatspot control
 │   ├── ledStrip.rs     # LED lighting control
-│   ├── display.rs      # Display control
 │   ├── logs.rs         # Log managemant module
-│   ├── web.rs          # Web server logic
-│   └── cam.rs          # Camera handling logic
+│   └── web.rs          # Web server logic
 ├── /logs               # Log files directory
 │   ├── terra-sys.log   # System logs
 │   └── terra-temp.log  # Temperature logs
