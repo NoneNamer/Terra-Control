@@ -8,13 +8,7 @@ use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use zip::{ZipWriter, write::FileOptions};
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LogEntry {
-    pub timestamp: DateTime<Utc>,
-    pub level: String,
-    pub message: String,
-}
+use crate::modules::models::LogEntry;
 
 // Function to get log entries from the database
 pub async fn get_log_entries(

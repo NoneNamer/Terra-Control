@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use chrono::Local;
 use rppal::gpio::{Gpio, OutputPin};
-use rusqlite::{params, Connection, Result};
+use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use log::{info, warn};
@@ -213,7 +213,7 @@ impl LightController {
 ///
 /// A Result indicating success or an error
 pub async fn update_lights(
-    db: &rusqlite::Connection,
+    db: &SqlitePool,
     light_controller: &Arc<tokio::sync::Mutex<LightController>>,
     config: &crate::modules::config::Config
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -221,26 +221,33 @@ pub async fn update_lights(
     let now = Local::now();
     let current_time = now.format("%H:%M").to_string();
     
+    // Get current week number (1-52)
+    let week_number = now.iso_week().week() as i32;
+    
     // Get current schedule from DB
-    let mut stmt = db.prepare("SELECT uv1_start, uv1_end, uv2_start, uv2_end, heat_start, heat_end FROM schedule WHERE ? BETWEEN week_start AND week_end")?;
-    let schedule = stmt.query_row(params![now.format("%Y-%m-%d").to_string()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?
-        ))
-    });
+    let schedule = sqlx::query!(
+        "SELECT uv1_start, uv1_end, uv2_start, uv2_end, heat_start, heat_end 
+         FROM schedule 
+         WHERE week_number = $1",
+        week_number
+    )
+    .fetch_optional(db)
+    .await?;
     
     // Update relays based on schedule
     let mut controller = light_controller.lock().await;
     
     // Get schedule times (or use defaults if no schedule found)
     let (uv1_start, uv1_end, uv2_start, uv2_end, heat_start, heat_end) = match schedule {
-        Ok(s) => s,
-        Err(_) => (
+        Some(s) => (
+            s.uv1_start,
+            s.uv1_end,
+            s.uv2_start,
+            s.uv2_end,
+            s.heat_start,
+            s.heat_end
+        ),
+        None => (
             config.db.def_uv1_start.clone(),
             config.db.def_uv1_end.clone(),
             config.db.def_uv2_start.clone(),

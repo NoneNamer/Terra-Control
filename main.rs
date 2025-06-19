@@ -8,7 +8,6 @@ use modules::ledStrip::{LEDController, update_leds};
 use modules::storage;
 use modules::getData::{self, CurrentReadings};
 use modules::logs;
-use modules::cam::CameraService;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -21,9 +20,6 @@ use axum::{
     Router,
     http::StatusCode,
 };
-use futures::stream::{self, Stream};
-use std::convert::Infallible;
-use tokio_stream::StreamExt;
 use std::time::Duration;
 
 /// Main entry point
@@ -33,12 +29,10 @@ use std::time::Duration;
 /// - Initializes the database connection
 /// - Sets up the relay controller for device control
 /// - Initializes the light and LED controllers
-/// - Sets up the camera service
 /// - Starts background tasks for:
 ///   - Sensor data collection
 ///   - Light control based on schedule
 ///   - LED control based on schedule
-///   - Camera streaming server
 ///   - Web server for the control interface
 ///
 /// # Errors
@@ -84,13 +78,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
     // Create a shared state for current sensor readings
     let current_readings = Arc::new(Mutex::new(CurrentReadings::new()));
-
-    // Initialize the camera service
-    let camera_service = Arc::new(CameraService::new());
-    if let Err(e) = camera_service.initialize().await {
-        eprintln!("Warning: Failed to initialize camera: {:?}", e);
-        logs::log(&db_pool, "WARNING", &format!("Failed to initialize camera: {:?}", e)).await?;
-    }
 
     // Initialize and start the sensor data collection task
     getData::start_data_collection(
@@ -143,18 +130,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    // Start the camera stream server (separate from main web server)
-    let camera_stream_handle = task::spawn({
-        let camera_service_clone = Arc::clone(&camera_service);
-        let config_clone = Arc::clone(&config);
-        
-        async move {
-            if let Err(e) = start_camera_stream_server(camera_service_clone, config_clone).await {
-                eprintln!("Error running camera stream server: {:?}", e);
-            }
-        }
-    });
-
     // Log web server startup
     logs::log(&db_pool, "INFO", "Starting web server").await?;
 
@@ -166,7 +141,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let led_controller = Arc::clone(&led_controller);
         let current_readings = Arc::clone(&current_readings);
         let config = Arc::clone(&config);
-        let camera_service = Arc::clone(&camera_service);
         
         async move {
             let router = web::create_router(
@@ -175,8 +149,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 relay_controller, 
                 led_controller,
                 current_readings,
-                config,
-                camera_service
+                config
             ).await;
             
             let addr: SocketAddr = format!("{}:{}", config.web.address, config.web.port)
@@ -192,7 +165,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // Wait for all tasks to finish (they shouldn't unless there's an error)
-    tokio::try_join!(light_control_handle, led_control_handle, camera_stream_handle, web_handle)?;
+    tokio::try_join!(light_control_handle, led_control_handle, web_handle)?;
 
     // Log system shutdown
     logs::log(&db_pool, "INFO", "Terrarium Controller shutting down").await?;
@@ -201,98 +174,4 @@ async fn main() -> Result<(), Box<dyn Error>> {
     getData::shutdown_safely(&db_pool).await;
 
     Ok(())
-}
-
-/// Starts a separate HTTP server dedicated to streaming camera footage.
-/// 
-/// This function creates an Axum server that provides:
-/// - A `/stream` endpoint that sends camera frames as Server-Sent Events (SSE)
-/// - Static file serving from the `./static` directory
-/// 
-/// The server runs on the port specified in the configuration (default: 3030)
-/// and accepts connections from any network interface.
-/// 
-/// # Arguments
-/// 
-/// * `camera_service` - A reference-counted pointer to the camera service
-/// * `config` - A reference-counted pointer to the application configuration
-/// 
-/// # Errors
-/// 
-/// Returns an error if the server fails to bind to the specified address
-/// or encounters any other error during operation.
-async fn start_camera_stream_server(
-    camera_service: Arc<CameraService>,
-    config: Arc<Config>
-) -> Result<(), Box<dyn Error>> {
-    // Create app state
-    let state = CameraStreamState { camera_service };
-
-    // Create router
-    let router = Router::new()
-        .route("/stream", get(handle_camera_stream))
-        .nest_service("/", tower_http::services::ServeDir::new("./static"))
-        .with_state(state);
-
-    // Get port from config, or use default 3030
-    let port = config.web.camera_port.unwrap_or(3030);
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    
-    println!("Starting camera stream server on port {}", port);
-    axum::Server::bind(&addr)
-        .serve(router.into_make_service())
-        .await?;
-        
-    Ok(())
-}
-
-// State for the camera stream server
-#[derive(Clone)]
-struct CameraStreamState {
-    camera_service: Arc<CameraService>,
-}
-
-/// Handles requests to the camera stream endpoint.
-/// 
-/// This function creates a Server-Sent Events (SSE) stream that sends camera frames
-/// as base64-encoded JPEG images at a rate of approximately 30 frames per second.
-/// 
-/// # Arguments
-/// 
-/// * `State(state)` - The application state containing the camera service
-/// 
-/// # Returns
-/// 
-/// Returns an SSE stream that can be consumed by web clients.
-async fn handle_camera_stream(
-    State(state): State<CameraStreamState>,
-) -> impl IntoResponse {
-    // Build a SSE stream of camera frames
-    let stream = stream::unfold(state.camera_service.clone(), |camera_service| async move {
-        // Create a 30 FPS stream (33ms per frame)
-        tokio::time::sleep(Duration::from_millis(33)).await;
-        
-        match camera_service.take_snapshot().await {
-            Ok(jpeg_data) => {
-                // Encode the JPEG data as base64
-                let base64_data = base64::encode(&jpeg_data);
-                // Create an SSE event with the base64 data
-                let event = Event::default().data(base64_data);
-                Some((event, camera_service))
-            },
-            Err(e) => {
-                eprintln!("Error capturing frame: {:?}", e);
-                // Continue the stream even if there's an error
-                Some((Event::default().comment("Error capturing frame"), camera_service))
-            }
-        }
-    });
-
-    // Create an SSE response from the stream
-    Sse::new(stream)
-        .keep_alive(
-            axum::response::sse::KeepAlive::new()
-                .interval(Duration::from_secs(1))
-                .text("keep-alive-text")
-        )
 }

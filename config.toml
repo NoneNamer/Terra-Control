@@ -18,45 +18,43 @@ led_relay = 17
 uv_relay1 = 22
 uv_relay2 = 23
 heat_relay = 27
+led_relay = 17
+ic_count = 16
 ds18b20_bus = 4
 dht22_pin = 18
-veml6075_uv1 = 0
-veml6075_uv2 = 1
-ic_count = 16
 
 [led]
 default_mode = "natural"
 default_brightness = 50
 season_weight = 0.3
+fade_duration = 300  # Duration in seconds for fade in/out
+fade_steps = 60     # Number of steps for smooth fading
 
-# Natural light presets - RGB values for time of day
-morning_r = 255
-morning_g = 180
-morning_b = 100
-morning_ww = 200
-morning_cw = 50
+# Natural light presets
+[morning]
+r = 255
+g = 180
+b = 100
+ww = 200
+cw = 50
 
-noon_r = 255
-noon_g = 240
-noon_b = 220
-noon_ww = 50
-noon_cw = 255
+[noon]
+r = 255
+g = 240
+b = 220
+ww = 50
+cw = 255
 
-evening_r = 255
-evening_g = 140
-evening_b = 50
-evening_ww = 255
-evening_cw = 0
-
-[display]
-# Future display settings
+[evening]
+r = 255
+g = 140
+b = 50
+ww = 255
+cw = 0
 
 [web]
 address = "0.0.0.0"
 port = 80
-
-[cam]
-# Camera settings
 
 [db]
 def_uv1_start = "06:30"

@@ -1,9 +1,11 @@
 use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::modules::gpio::{LEDStrip, RGBWW, RelayController, RelayType};
+use crate::modules::gpio::{LEDStrip, RelayController, RelayType};
 use crate::modules::config::Config;
+use crate::modules::models::{LightPreset, RGBWW};
 use chrono::{Local, NaiveTime};
+use sqlx::SqlitePool;
 
 /// Controls the LED strip with power management via relay.
 ///
@@ -14,145 +16,6 @@ pub struct LEDController {
     relay_controller: Arc<Mutex<RelayController>>,
     power_state: bool,
 }
-
-/// Natural light presets for different times of day.
-///
-/// Represents a specific color configuration for the LED strip that mimics
-/// natural lighting conditions at different times of day (morning, noon, evening).
-#[derive(Clone, Copy)]
-pub struct LightPreset {
-    r: u8,
-    g: u8,
-    b: u8,
-    ww: u8,
-    cw: u8,
-}
-
-impl LightPreset {
-    /// Creates a new LightPreset with specified RGBWW values.
-    ///
-    /// # Arguments
-    ///
-    /// * `r` - Red component (0-255)
-    /// * `g` - Green component (0-255)
-    /// * `b` - Blue component (0-255)
-    /// * `ww` - Warm white component (0-255)
-    /// * `cw` - Cool white component (0-255)
-    ///
-    /// # Returns
-    ///
-    /// A new LightPreset with the specified values
-    fn new(r: u8, g: u8, b: u8, ww: u8, cw: u8) -> Self {
-        Self { r, g, b, ww, cw }
-    }
-    
-    /// Creates a morning light preset from configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The application configuration containing light settings
-    ///
-    /// # Returns
-    ///
-    /// A LightPreset with morning lighting values
-    fn from_config_morning(config: &Config) -> Self {
-        Self {
-            r: config.led.morning_r,
-            g: config.led.morning_g,
-            b: config.led.morning_b,
-            ww: config.led.morning_ww,
-            cw: config.led.morning_cw,
-        }
-    }
-    
-    /// Creates a noon light preset from configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The application configuration containing light settings
-    ///
-    /// # Returns
-    ///
-    /// A LightPreset with noon lighting values
-    fn from_config_noon(config: &Config) -> Self {
-        Self {
-            r: config.led.noon_r,
-            g: config.led.noon_g,
-            b: config.led.noon_b,
-            ww: config.led.noon_ww,
-            cw: config.led.noon_cw,
-        }
-    }
-    
-    /// Creates an evening light preset from configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The application configuration containing light settings
-    ///
-    /// # Returns
-    ///
-    /// A LightPreset with evening lighting values
-    fn from_config_evening(config: &Config) -> Self {
-        Self {
-            r: config.led.evening_r,
-            g: config.led.evening_g,
-            b: config.led.evening_b,
-            ww: config.led.evening_ww,
-            cw: config.led.evening_cw,
-        }
-    }
-    
-    /// Interpolates between two light presets by a given factor.
-    ///
-    /// Used to smoothly transition between lighting conditions (e.g., morning to noon).
-    ///
-    /// # Arguments
-    ///
-    /// * `other` - The target preset to interpolate towards
-    /// * `factor` - A value between 0.0 and 1.0 that determines how far to interpolate
-    ///              (0.0 = this preset, 1.0 = other preset)
-    ///
-    /// # Returns
-    ///
-    /// A new LightPreset representing the interpolated values
-    fn interpolate(&self, other: &LightPreset, factor: f32) -> Self {
-        let factor = factor.clamp(0.0, 1.0);
-        let r = self.r as f32 * (1.0 - factor) + other.r as f32 * factor;
-        let g = self.g as f32 * (1.0 - factor) + other.g as f32 * factor;
-        let b = self.b as f32 * (1.0 - factor) + other.b as f32 * factor;
-        let ww = self.ww as f32 * (1.0 - factor) + other.ww as f32 * factor;
-        let cw = self.cw as f32 * (1.0 - factor) + other.cw as f32 * factor;
-        
-        Self {
-            r: r as u8,
-            g: g as u8,
-            b: b as u8,
-            ww: ww as u8,
-            cw: cw as u8,
-        }
-    }
-    
-    /// Converts the preset to an RGBWW struct for use with the LED controller.
-    ///
-    /// # Returns
-    ///
-    /// An RGBWW struct with the preset's color values
-    fn to_rgbww(&self) -> RGBWW {
-        RGBWW {
-            r: self.r,
-            g: self.g,
-            b: self.b,
-            ww: self.ww,
-            cw: self.cw,
-        }
-    }
-}
-
-// Default presets for different times of day (fallbacks if config doesn't have values)
-const MORNING_PRESET: LightPreset = LightPreset { r: 255, g: 180, b: 100, ww: 200, cw: 50 };
-const NOON_PRESET: LightPreset = LightPreset { r: 255, g: 240, b: 220, ww: 50, cw: 255 };
-const EVENING_PRESET: LightPreset = LightPreset { r: 255, g: 140, b: 50, ww: 255, cw: 0 };
 
 impl LEDController {
     /// Creates a new LED controller with power management.
@@ -301,6 +164,92 @@ impl LEDController {
     pub fn is_powered_on(&self) -> bool {
         self.power_state
     }
+
+    /// Fades the LED strip from its current color to a target color over a specified duration.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_color` - The final RGBWW color to fade to
+    /// * `duration_secs` - The duration of the fade in seconds
+    /// * `steps` - The number of steps to use for the fade (higher = smoother)
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
+    pub async fn fade_to(&mut self, target_color: RGBWW, duration_secs: u32, steps: u32) -> Result<(), Box<dyn Error>> {
+        // Ensure the strip is powered on
+        if !self.power_state {
+            self.power_on().await?;
+        }
+
+        // Get current color
+        let current_color = if let Some(ref strip) = self.led_strip {
+            strip.get_current_color()
+        } else {
+            RGBWW::off()
+        };
+
+        // Calculate step duration
+        let step_duration = duration_secs as f32 / steps as f32;
+        let step_ms = (step_duration * 1000.0) as u64;
+
+        // Perform the fade
+        for step in 0..=steps {
+            let factor = step as f32 / steps as f32;
+            
+            // Interpolate between current and target color
+            let r = (current_color.r as f32 * (1.0 - factor) + target_color.r as f32 * factor) as u8;
+            let g = (current_color.g as f32 * (1.0 - factor) + target_color.g as f32 * factor) as u8;
+            let b = (current_color.b as f32 * (1.0 - factor) + target_color.b as f32 * factor) as u8;
+            let ww = (current_color.ww as f32 * (1.0 - factor) + target_color.ww as f32 * factor) as u8;
+            let cw = (current_color.cw as f32 * (1.0 - factor) + target_color.cw as f32 * factor) as u8;
+
+            let color = RGBWW { r, g, b, ww, cw };
+            
+            // Set the color
+            if let Some(ref mut strip) = self.led_strip {
+                strip.set_all(color);
+                strip.show()?;
+            }
+
+            // Wait for next step
+            tokio::time::sleep(tokio::time::Duration::from_millis(step_ms)).await;
+        }
+
+        Ok(())
+    }
+
+    /// Fades the LED strip to off over a specified duration.
+    ///
+    /// # Arguments
+    ///
+    /// * `duration_secs` - The duration of the fade in seconds
+    /// * `steps` - The number of steps to use for the fade (higher = smoother)
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
+    pub async fn fade_out(&mut self, duration_secs: u32, steps: u32) -> Result<(), Box<dyn Error>> {
+        self.fade_to(RGBWW::off(), duration_secs, steps).await?;
+        self.power_off().await?;
+        Ok(())
+    }
+
+    /// Fades the LED strip from off to a target color over a specified duration.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_color` - The final RGBWW color to fade to
+    /// * `duration_secs` - The duration of the fade in seconds
+    /// * `steps` - The number of steps to use for the fade (higher = smoother)
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
+    pub async fn fade_in(&mut self, target_color: RGBWW, duration_secs: u32, steps: u32) -> Result<(), Box<dyn Error>> {
+        self.power_on().await?;
+        self.fade_to(target_color, duration_secs, steps).await
+    }
 }
 
 /// Calculates a natural light color based on the time of day.
@@ -407,7 +356,7 @@ pub fn calculate_natural_light(
 ///
 /// A Result indicating success or an error
 pub async fn update_leds(
-    db_pool: &rusqlite::Connection,
+    db_pool: &SqlitePool,
     led_controller: &Arc<Mutex<LEDController>>,
     config: &Config
 ) -> Result<(), Box<dyn Error>> {
@@ -415,105 +364,96 @@ pub async fn update_leds(
     let now = Local::now();
     let current_time = now.format("%H:%M").to_string();
     
+    // Get current week number (1-52)
+    let week_number = now.iso_week().week() as i32;
+    
     // Try to get schedule from database first
-    let schedule_result = db_pool.query_row(
-        "SELECT led_start, led_end, led_r, led_g, led_b, led_cw, led_ww FROM schedule WHERE ? BETWEEN week_start AND week_end",
-        [now.format("%Y-%m-%d").to_string()],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?, // led_start
-                row.get::<_, String>(1)?, // led_end
-                row.get::<_, i32>(2)? as u8, // led_r
-                row.get::<_, i32>(3)? as u8, // led_g
-                row.get::<_, i32>(4)? as u8, // led_b
-                row.get::<_, i32>(5)? as u8, // led_cw
-                row.get::<_, i32>(6)? as u8, // led_ww
-            ))
-        }
-    );
+    let schedule_result = sqlx::query!(
+        "SELECT led_start, led_end, led_r, led_g, led_b, led_cw, led_ww 
+         FROM schedule 
+         WHERE week_number = $1",
+        week_number
+    )
+    .fetch_optional(db_pool)
+    .await?;
     
     // Get led settings from database
-    let led_settings_result = db_pool.query_row(
-        "SELECT r, g, b, ww, cw, enabled, override, season_weight FROM led_settings WHERE id = 1",
-        [],
-        |row| {
-            Ok((
-                row.get::<_, i32>(0)? as u8,  // r
-                row.get::<_, i32>(1)? as u8,  // g
-                row.get::<_, i32>(2)? as u8,  // b
-                row.get::<_, i32>(3)? as u8,  // ww
-                row.get::<_, i32>(4)? as u8,  // cw
-                row.get::<_, bool>(5)?,       // enabled
-                row.get::<_, i32>(6)? != 0,   // override (true if using manual settings)
-                row.get::<_, f32>(7)?         // season_weight
-            ))
-        }
+    let led_settings = sqlx::query!(
+        "SELECT r, g, b, ww, cw, enabled, override, season_weight 
+         FROM led_settings 
+         WHERE id = 1"
+    )
+    .fetch_one(db_pool)
+    .await?;
+    
+    // Process the results
+    let (r, g, b, ww, cw, enabled, override_settings, season_weight) = (
+        led_settings.r as u8,
+        led_settings.g as u8,
+        led_settings.b as u8,
+        led_settings.ww as u8,
+        led_settings.cw as u8,
+        led_settings.enabled != 0,
+        led_settings.override != 0,
+        led_settings.season_weight
     );
     
-    // Check if LEDs should be enabled based on schedule
-    let (leds_enabled, morning_time, evening_time) = match &schedule_result {
-        Ok((start, end, _, _, _, _, _)) => {
-            // Check if current time is between start and end
-            (current_time >= *start && current_time <= *end, start.clone(), end.clone())
-        },
-        Err(_) => (true, "07:00".to_string(), "19:00".to_string()) // Default if no schedule
-    };
-    
-    // Fixed noon time
-    let noon_time = "12:00".to_string();
-    
+    // Decide whether to use scheduled or manual settings
     let mut controller = led_controller.lock().await;
     
-    match led_settings_result {
-        Ok((r, g, b, ww, cw, enabled, override_natural, season_weight)) => {
-            if enabled && leds_enabled {
-                // Get the season color from the schedule
-                let season_color = match &schedule_result {
-                    Ok((_, _, sr, sg, sb, scw, sww)) => (*sr, *sg, *sb, *sww, *scw),
-                    Err(_) => (r, g, b, ww, cw), // Use manual settings as fallback
-                };
-                
-                if override_natural {
-                    // Use manual settings
-                    controller.set_rgbww(r, g, b, ww, cw).await?;
-                } else {
-                    // Calculate natural light colors based on time of day and season
-                    let (calc_r, calc_g, calc_b, calc_ww, calc_cw) = calculate_natural_light(
-                        &current_time,
-                        &morning_time,
-                        &noon_time,
-                        &evening_time,
-                        &season_color,
-                        season_weight,
-                        config
-                    )?;
-                    
-                    controller.set_rgbww(calc_r, calc_g, calc_b, calc_ww, calc_cw).await?;
-                }
+    if override_settings {
+        // Use manual settings from led_settings table
+        if enabled {
+            controller.set_rgbww(r, g, b, ww, cw).await?;
+        } else {
+            controller.set_off().await?;
+        }
+    } else {
+        // Use schedule-based settings if available
+        if let Some(schedule) = schedule_result {
+            let (led_start, led_end, led_r, led_g, led_b, led_cw, led_ww) = (
+                schedule.led_start,
+                schedule.led_end,
+                schedule.led_r as u8,
+                schedule.led_g as u8,
+                schedule.led_b as u8,
+                schedule.led_cw as u8,
+                schedule.led_ww as u8
+            );
+            
+            if is_time_between(&current_time, &led_start, &led_end) {
+                controller.set_rgbww(led_r, led_g, led_b, led_cw, led_ww).await?;
             } else {
-                controller.power_off().await?;
+                controller.set_off().await?;
             }
-        },
-        Err(_) => {
-            // Use defaults from config if no settings found
-            let (r, g, b, ww, cw, enabled) = (
+        } else {
+            // Use default values from config
+            controller.set_rgbww(
                 config.db.def_led_R as u8,
                 config.db.def_led_G as u8,
                 config.db.def_led_B as u8,
-                config.db.def_led_WW as u8,
                 config.db.def_led_CW as u8,
-                true // Default to enabled
-            );
-            
-            if enabled && leds_enabled {
-                controller.set_rgbww(r, g, b, ww, cw).await?;
-            } else {
-                controller.power_off().await?;
-            }
+                config.db.def_led_WW as u8
+            ).await?;
         }
     }
     
     Ok(())
+}
+
+/// Checks if the current time is between two specified times.
+///
+/// # Arguments
+///
+/// * `time` - The time to check
+/// * `start` - The start time in 24-hour format (HH:MM)
+/// * `end` - The end time in 24-hour format (HH:MM)
+///
+/// # Returns
+///
+/// True if the time is between start and end, False otherwise
+fn is_time_between(time: &str, start: &str, end: &str) -> bool {
+    time >= start && time <= end
 }
 
 /// Retrieves LED settings from the database.

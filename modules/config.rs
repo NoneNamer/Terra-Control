@@ -3,6 +3,7 @@ use std::fs;
 use std::error::Error;
 use toml;
 use chrono::NaiveTime;
+use serde::{Serialize, Deserialize};
 
 //top level config struct
 #[derive(Debug, Deserialize)]
@@ -32,8 +33,6 @@ pub struct GpioConfig {
     pub ic_count: Option<usize>,
     pub ds18b20_bus: Option<u8>,
     pub dht22_pin: Option<u8>,
-    pub veml6075_uv1: u8,
-    pub veml6075_uv2: u8,
 }
 
 //lightControl struct
@@ -75,31 +74,37 @@ pub struct ScheduleConfig {
     pub def_led_CW: i32,
 }
 
-// LED configuration
+/// Natural light preset configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct LightPresetConfig {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub ww: u8,
+    pub cw: u8,
+}
+
+/// LED configuration from config.toml
 #[derive(Debug, Clone, Deserialize)]
 pub struct LedConfig {
     pub default_mode: String,                     // Either "manual" or "natural"
     pub default_brightness: u8,                   // 0-100% brightness
-    pub season_weight: f32,                       // 0.0 - 1.0 weight of season color
+    pub fade_duration: u32,                       // Duration in seconds for fade in/out
+    pub fade_steps: u32,                          // Number of steps for smooth fading
 
     // Natural light presets
-    pub morning_r: u8,
-    pub morning_g: u8,
-    pub morning_b: u8,
-    pub morning_ww: u8,
-    pub morning_cw: u8,
+    pub morning: LightPresetConfig,
+    pub noon: LightPresetConfig,
+    pub evening: LightPresetConfig,
+}
 
-    pub noon_r: u8,
-    pub noon_g: u8,
-    pub noon_b: u8,
-    pub noon_ww: u8,
-    pub noon_cw: u8,
-
-    pub evening_r: u8,
-    pub evening_g: u8,
-    pub evening_b: u8,
-    pub evening_ww: u8,
-    pub evening_cw: u8,
+/// Dynamic LED settings stored in the database
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LEDSettings {
+    pub enabled: bool,                            // Whether the LED strip is enabled
+    pub override_natural: bool,                   // Whether to override natural light mode
+    pub season_weight: f32,                       // 0.0 - 1.0 weight of season color
+    pub manual_color: LightPresetConfig,          // Manual color settings when override is true
 }
 
 //validation logic
@@ -165,16 +170,6 @@ impl GpioConfig {
             dht22_pin: gpio.get("dht22_pin")
                 .and_then(|v| v.as_integer())
                 .map(|v| v as u8),
-            
-            veml6075_uv1: gpio.get("veml6075_uv1")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8)
-                .expect("Missing or invalid veml6075_uv1 in config"),
-            
-            veml6075_uv2: gpio.get("veml6075_uv2")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8)
-                .expect("Missing or invalid veml6075_uv2 in config"),
         }
     }
     
@@ -312,11 +307,61 @@ impl GetDataConfig {
 
 impl LedConfig {
     pub fn validate(&self) -> Result<(), String> {
-        // Validate weight is between 0 and 1
+        // Validate default mode
+        if self.default_mode != "manual" && self.default_mode != "natural" {
+            return Err(format!("Default mode must be either 'manual' or 'natural', got: {}", self.default_mode));
+        }
+        
+        // Validate brightness
+        if self.default_brightness > 100 {
+            return Err(format!("Default brightness must be between 0 and 100, got: {}", self.default_brightness));
+        }
+        
+        // Validate fade settings
+        if self.fade_duration == 0 {
+            return Err("Fade duration must be greater than 0".to_string());
+        }
+        if self.fade_steps == 0 {
+            return Err("Fade steps must be greater than 0".to_string());
+        }
+        if self.fade_steps > 255 {
+            return Err(format!("Fade steps must be between 1 and 255, got: {}", self.fade_steps));
+        }
+        
+        // Validate color presets
+        let validate_preset = |name: &str, preset: &LightPresetConfig| {
+            if preset.r > 255 || preset.g > 255 || preset.b > 255 || 
+               preset.ww > 255 || preset.cw > 255 {
+                Err(format!("{} color values must be between 0 and 255", name))
+            } else {
+                Ok(())
+            }
+        };
+        
+        validate_preset("Morning", &self.morning)?;
+        validate_preset("Noon", &self.noon)?;
+        validate_preset("Evening", &self.evening)?;
+        
+        Ok(())
+    }
+}
+
+impl LEDSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        // Validate season weight
         if self.season_weight < 0.0 || self.season_weight > 1.0 {
             return Err(format!("Season weight must be between 0.0 and 1.0, got: {}", self.season_weight));
         }
-        
+
+        // Validate manual color if override is enabled
+        if self.override_natural {
+            if self.manual_color.r > 255 || self.manual_color.g > 255 || 
+               self.manual_color.b > 255 || self.manual_color.ww > 255 || 
+               self.manual_color.cw > 255 {
+                return Err("Manual color values must be between 0 and 255".to_string());
+            }
+        }
+
         Ok(())
     }
 }

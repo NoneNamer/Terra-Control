@@ -14,7 +14,6 @@
             <a href="schedule.html">Schedule</a>
             <a href="data.html">Data</a>
             <a href="led.html">LED Control</a>
-            <a href="cam.html">Camera</a>
         </nav><hr>
 
         <h2>Current Readings</h2>
@@ -31,10 +30,6 @@
                 <canvas id="yesterdayGraph"></canvas>
             </div>
         </div><br><br><hr>
-        <h2>UV Status</h2>
-        <p>UV1: <span id="UV1">--</span> UVI <span id="UV1Status">--</span></p>
-        <p>UV2: <span id="UV2">--</span> UVI <span id="UV2Status">--</span></p>
-        <br><br><hr>
     </div>
 
     <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
@@ -103,14 +98,6 @@
                 document.getElementById('controlTemp').textContent = data.controlTemp.toFixed(1);
                 document.getElementById('coolZoneTemp').textContent = data.coolZoneTemp.toFixed(1);
                 document.getElementById('humidity').textContent = data.humidity.toFixed(1);
-                
-                // Update UV values and status
-                document.getElementById('UV1').textContent = data.uv1.toFixed(1);
-                document.getElementById('UV2').textContent = data.uv2.toFixed(1);
-                
-                // Update UV status indicators
-                document.getElementById('UV1Status').textContent = data.uv1_on ? '✅' : '❌';
-                document.getElementById('UV2Status').textContent = data.uv2_on ? '✅' : '❌';
                 
             } catch (error) {
                 console.error('Error fetching current values:', error);

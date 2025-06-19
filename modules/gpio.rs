@@ -4,8 +4,9 @@ use std::error::Error;
 use std::thread;
 use std::time::Duration;
 use crate::modules::config::GpioConfig;
+use crate::modules::models::RGBWW;
 
-// WS2805 Constants (SPI Timing)
+/// WS2805 Constants (SPI Timing)
 const T0H: u8 = 0b10000000; // ~312.5ns high
 const T1H: u8 = 0b11000000; // ~625ns high
 const RESET_TIME_US: u64 = 300; // >280µs reset time
@@ -15,35 +16,6 @@ const BITS_PER_CHANNEL: usize = 8; // 8 bits per channel
 /// Loads LED strip count from config
 fn get_ic_count() -> usize {
     GpioConfig::load().ic_count.unwrap_or(16) // Default to 16 if not set
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RGBWW {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub ww: u8,
-    pub cw: u8,
-}
-
-impl RGBWW {
-    pub fn off() -> Self {
-        Self { r: 0, g: 0, b: 0, ww: 0, cw: 0 }
-    }
-
-    pub fn from_str(s: &str) -> Result<Self, Box<dyn Error>> {
-        let parts: Vec<&str> = s.split(',').collect();
-        if parts.len() != 5 {
-            return Err("LED values must be in format R,G,B,WW,CW".into());
-        }
-        Ok(Self {
-            r: parts[0].parse()?,
-            g: parts[1].parse()?,
-            b: parts[2].parse()?,
-            ww: parts[3].parse()?,
-            cw: parts[4].parse()?,
-        })
-    }
 }
 
 /// Converts a byte to SPI bit timing format

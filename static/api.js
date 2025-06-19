@@ -103,10 +103,6 @@ async function updateCurrentReadings() {
         document.getElementById('controlTemp').textContent = data.controlTemp.toFixed(1);
         document.getElementById('coolZoneTemp').textContent = data.coolZoneTemp.toFixed(1);
         document.getElementById('humidity').textContent = data.humidity.toFixed(1);
-        
-        // Update UV status with proper indicators
-        document.getElementById('UV1').textContent = `${data.uv1.value} UVI ${data.uv1.ok ? '✅' : '❌'}`;
-        document.getElementById('UV2').textContent = `${data.uv2.value} UVI ${data.uv2.ok ? '✅' : '❌'}`;
     } catch (error) {
         console.error('Failed to update readings:', error);
     }

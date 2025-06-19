@@ -1,5 +1,3 @@
-0. **Cleanup**:
-   - remove artifacts from camera and uv sensors 
 
 1. **Network**:
    - Implement Token-based authentication for the web and camera servers

@@ -76,9 +76,6 @@ pub fn map_db_error<E: std::fmt::Display>(err: E) -> ApiError {
 /// - Hardware controllers (light, relay, LED)
 /// - Current sensor readings
 /// - Application configuration
-/// - Camera service
-///
-/// It's used with Axum's State extractor to provide handlers access to these resources.
 pub struct AppState {
     db_pool: Arc<SqlitePool>,
     light_controller: Arc<Mutex<LightController>>,
@@ -86,7 +83,6 @@ pub struct AppState {
     led_controller: Arc<Mutex<LEDController>>,
     current_readings: Arc<Mutex<CurrentReadings>>,
     config: Arc<Config>,
-    camera_service: Arc<CameraService>,
 }
 
 // Helper methods for AppState
@@ -147,14 +143,6 @@ impl AppState {
             .await
             .map_err(map_db_error)
     }
-    
-    /// Execute a function with the camera service
-    pub async fn with_camera<F, R, E>(&self, f: F) -> Result<R, E> 
-    where
-        F: FnOnce(&CameraService) -> Result<R, E>,
-    {
-        f(&self.camera_service)
-    }
 }
 
 // ===== Module Organization =====
@@ -193,7 +181,6 @@ use handlers::camera::*;
 /// * `led_controller` - Reference to the LED controller
 /// * `current_readings` - Shared state for current sensor readings
 /// * `config` - Application configuration
-/// * `camera_service` - Camera service for snapshots and streaming
 ///
 /// # Returns
 ///
@@ -205,7 +192,6 @@ pub async fn create_router(
     led_controller: Arc<Mutex<LEDController>>,
     current_readings: Arc<Mutex<CurrentReadings>>,
     config: Arc<Config>,
-    camera_service: Arc<CameraService>,
 ) -> Router {
     let state = AppState {
         db_pool: Arc::new(db_pool.clone()),
@@ -214,7 +200,6 @@ pub async fn create_router(
         led_controller,
         current_readings,
         config,
-        camera_service,
     };
 
     Router::new()
@@ -562,10 +547,6 @@ pub mod handlers {
             pub controlTemp: f32,
             pub coolZoneTemp: f32,
             pub humidity: f32,
-            pub uv1: f32,
-            pub uv2: f32,
-            pub uv1_on: bool,
-            pub uv2_on: bool,
             pub heat_on: bool,
             pub led_on: bool,
             pub overheat: bool,
@@ -575,28 +556,20 @@ pub mod handlers {
         pub async fn get_current_values(
             State(state): State<AppState>,
         ) -> Json<CurrentValuesResponse> {
-            let current_readings = state.current_readings.lock().await;
-            let light_controller = state.light_controller.lock().await;
-            let led_controller = state.led_controller.lock().await;
-            
-            let (overheat, _) = get_overheat_status(&state.db_pool).await;
-            
-            let response = CurrentValuesResponse {
-                timestamp: Utc::now().to_rfc3339(),
-                baskingTemp: current_readings.basking_temp,
-                controlTemp: current_readings.control_temp,
-                coolZoneTemp: current_readings.cool_zone_temp,
-                humidity: current_readings.humidity,
-                uv1: current_readings.uv1_intensity,
-                uv2: current_readings.uv2_intensity,
-                uv1_on: light_controller.is_uv1_on(),
-                uv2_on: light_controller.is_uv2_on(),
-                heat_on: light_controller.is_heat_on(),
-                led_on: led_controller.is_on(),
-                overheat,
-            };
-            
-            Json(response)
+            let readings = state.current_readings.lock().await;
+            let light_ctrl = state.light_controller.lock().await;
+            let relay_ctrl = state.relay_controller.lock().await;
+            let led_ctrl = state.led_controller.lock().await;
+            Json(CurrentValuesResponse {
+                timestamp: readings.timestamp.to_rfc3339(),
+                baskingTemp: readings.basking_temp,
+                controlTemp: readings.control_temp,
+                coolZoneTemp: readings.cool_temp,
+                humidity: readings.humidity,
+                heat_on: relay_ctrl.is_heat_on(),
+                led_on: led_ctrl.is_on(),
+                overheat: light_ctrl.is_overheating(),
+            })
         }
 
         #[derive(Serialize)]

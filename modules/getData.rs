@@ -4,49 +4,16 @@ use log::{error, info, warn};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{DateTime, Utc, NaiveDateTime};
-use crate::gpio::{read_ds18b20, read_dht22, read_veml6075};
-use crate::modules::models::SensorReadings;
+use crate::gpio::{read_ds18b20, read_dht22};
+use crate::modules::models::{SensorReadings, CurrentReadings};
 use crate::modules::config::Config;
 use crate::modules::lightControl::LightController;
 use crate::modules::logs;
 use std::error::Error;
 
-/// Structure to store the most recent sensor readings from all sensors.
-/// Used to provide real-time data to the web interface and control systems.
-pub struct CurrentReadings {
-    pub timestamp: DateTime<Utc>,
-    pub basking_temp: f32,
-    pub control_temp: f32,
-    pub cool_temp: f32,
-    pub humidity: f32,
-    pub uv_1: f32,
-    pub uv_2: f32,
-}
-
-impl CurrentReadings {
-    /// Creates a new CurrentReadings instance with default values.
-    ///
-    /// Initializes all sensor readings to 0.0 and sets the timestamp to the current time.
-    ///
-    /// # Returns
-    ///
-    /// A new CurrentReadings instance with default values.
-    pub fn new() -> Self {
-        Self {
-            timestamp: Utc::now(),
-            basking_temp: 0.0,
-            control_temp: 0.0,
-            cool_temp: 0.0,
-            humidity: 0.0,
-            uv_1: 0.0,
-            uv_2: 0.0,
-        }
-    }
-}
-
 /// Reads all sensors in the terrarium and returns the current readings.
 ///
-/// This function polls all connected sensors (temperature, humidity, UV) 
+/// This function polls all connected sensors (temperature, humidity)
 /// with configured retry attempts if any reading fails.
 ///
 /// # Arguments
@@ -73,13 +40,6 @@ pub async fn read_all_sensors(config: &Config) -> CurrentReadings {
     let humidity = retry(|| read_dht22(config.gpio.dht22_pin.unwrap_or(18)), config.get_data.retry)
         .await.unwrap_or(0.0);
 
-    // Read UV sensors with configured retry count, using proper I2C buses
-    let uv_1 = retry(|| read_veml6075(0, config.gpio.veml6075_uv1), config.get_data.retry)
-        .await.unwrap_or(0.0);
-        
-    let uv_2 = retry(|| read_veml6075(1, config.gpio.veml6075_uv2), config.get_data.retry)
-        .await.unwrap_or(0.0);
-
     // Create reading object with all sensor data
     let readings = CurrentReadings {
         timestamp,
@@ -87,8 +47,6 @@ pub async fn read_all_sensors(config: &Config) -> CurrentReadings {
         control_temp,
         cool_temp,
         humidity,
-        uv_1,
-        uv_2,
     };
     
     // Check critical temperature (for logging only - actual control is in lightControl.rs)
@@ -136,8 +94,6 @@ pub async fn read_sensors(
         current.control_temp = readings.control_temp;
         current.cool_temp = readings.cool_temp;
         current.humidity = readings.humidity;
-        current.uv_1 = readings.uv_1;
-        current.uv_2 = readings.uv_2;
     }
     
     // Pass the current temperature to the light controller for overheat protection
@@ -150,13 +106,11 @@ pub async fn read_sensors(
     
     // Log the readings
     info!(
-        "Sensor readings - Basking: {:.1}°C, Control: {:.1}°C, Cool: {:.1}°C, Humidity: {:.1}%, UV1: {:.1} UVI, UV2: {:.1} UVI", 
+        "Sensor readings - Basking: {:.1}°C, Control: {:.1}°C, Cool: {:.1}°C, Humidity: {:.1}%", 
         readings.basking_temp, 
         readings.control_temp,
         readings.cool_temp, 
-        readings.humidity, 
-        readings.uv_1, 
-        readings.uv_2
+        readings.humidity
     );
     
     // Convert to database model
@@ -166,8 +120,6 @@ pub async fn read_sensors(
         control_temp: Some(readings.control_temp),
         cool_temp: Some(readings.cool_temp),
         humidity: Some(readings.humidity),
-        uv_1: Some(readings.uv_1),
-        uv_2: Some(readings.uv_2),
     };
     
     // Save to database
@@ -190,16 +142,14 @@ async fn save_readings_to_db(pool: &PgPool, readings: &SensorReadings) -> Result
     sqlx::query!(
         r#"
         INSERT INTO sensor_readings 
-        (timestamp, basking_temp, control_temp, cool_temp, humidity, uv_1, uv_2)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (timestamp, basking_temp, control_temp, cool_temp, humidity)
+        VALUES ($1, $2, $3, $4, $5)
         "#,
         readings.timestamp,
         readings.basking_temp,
         readings.control_temp,
         readings.cool_temp,
-        readings.humidity,
-        readings.uv_1,
-        readings.uv_2
+        readings.humidity
     )
     .execute(pool)
     .await?;
@@ -271,8 +221,6 @@ pub async fn get_current_readings(readings: &Arc<Mutex<CurrentReadings>>) -> Cur
         control_temp: current.control_temp,
         cool_temp: current.cool_temp,
         humidity: current.humidity,
-        uv_1: current.uv_1,
-        uv_2: current.uv_2,
     }
 }
 
