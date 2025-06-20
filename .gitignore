@@ -4,3 +4,4 @@ Dockerfile
 *.log
 .dockerignore
 Cargo.lock
+nodes_modules
