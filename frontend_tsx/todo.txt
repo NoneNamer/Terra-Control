@@ -1,0 +1,22 @@
+Todo Liste für das Terrarium Frontend.
+--------------------------------------
+-Zentrale Api erstellen
+-Kamera feed implimentieren
+-login system?
+-einstellungen?
+-cookies?
+-build info im frontend
+-
+-
+-
+-
+-
+-
+---> auf Vibecode fehler überprüfen !!!!
+
+--------------------------------------
+
+Abzuklären:
+-----------
+-welche datenbank?
+-bezeichnung api routen

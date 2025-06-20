@@ -1,0 +1,119 @@
+{
+  "header": {
+    "title": "Terrarium Control"
+  },
+  "home": {
+    "title": "Welcome",
+    "description": "Control your terrarium environment with precision and ease.",
+    "feature1": {
+      "title": "Modern Design",
+      "description": "Built with Tailwind CSS for a responsive and appealing design."
+    },
+    "feature2": {
+      "title": "Multilingual",
+      "description": "Support for multiple languages thanks to i18next."
+    }
+  },
+  "about": {
+    "title": "About Us",
+    "description": "We are a team of developers creating modern web applications.",
+    "mission": {
+      "title": "Our Mission",
+      "description": "We strive to develop the best web applications."
+    },
+    "vision": {
+      "title": "Our Vision",
+      "description": "We want to shape the future of web development."
+    }
+  },
+  "contact": {
+    "title": "Contact",
+    "form": {
+      "name": "Name",
+      "email": "Email",
+      "message": "Message",
+      "submit": "Submit"
+    }
+  },
+  "footer": {
+    "about": "About Us",
+    "aboutText": "We are a duo of developers who enjoy tinkering with things and running a small network.",
+    "contact": "Contact",
+    "follow": "Follow Us",
+    "copyright": "All rights reserved."
+  },
+  "terrarium": {
+    "title": "Terrarium Controller",
+    "currentReadings": "Current Readings",
+    "baskingTemp1": "Basking Temperature 1",
+    "baskingTemp2": "Basking Temperature 2",
+    "coolZoneTemp": "Cool Zone Temperature",
+    "humidity": "Humidity",
+    "uvStatus": "UV Status",
+    "today": "Today",
+    "yesterday": "Yesterday"
+  },
+  "led": {
+    "title": "LED Control Panel",
+    "manualOverride": "Manual Override",
+    "overrideDescription": "When override is enabled, the system will use the manual RGB and white settings instead of the natural light cycle.",
+    "overrideNaturalLight": "Override Natural Light",
+    "ledPower": "LED Power",
+    "red": "Red",
+    "green": "Green",
+    "blue": "Blue",
+    "warmWhite": "Warm White",
+    "coldWhite": "Cold White",
+    "naturalLightCycle": "Natural Light Cycle",
+    "seasonWeight": "Season Weight",
+    "morning": "Morning",
+    "noon": "Noon",
+    "evening": "Evening",
+    "savePresets": "Save Presets",
+    "presetsSaved": "Natural light presets saved successfully",
+    "errorSavingPresets": "Error saving natural light presets",
+    "timeOfDay": "Time of Day",
+    "lightPreview": "Light Preview",
+    "presetManagement": "Preset Management",
+    "warmW": "Warm W",
+    "coldW": "Cold W",
+    "applySettings": "Apply Settings"
+  },
+  "data": {
+    "title": "Data",
+    "recentLogs": "Recent Log Entries",
+    "loadingLogs": "Loading log entries...",
+    "refreshLogs": "Refresh Logs",
+    "allEntries": "All Entries",
+    "info": "Info",
+    "warnings": "Warnings",
+    "errors": "Errors",
+    "limit": "Limit"
+  },
+  "schedule": {
+    "title": "Schedule",
+    "createSchedule": "Create Schedule",
+    "editSchedule": "Edit Schedule",
+    "deleteSchedule": "Delete Schedule",
+    "activeSchedules": "Active Schedules",
+    "noSchedules": "No active schedules",
+    "startTime": "Start Time",
+    "endTime": "End Time",
+    "days": "Days",
+    "actions": "Actions",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "confirmDelete": "Are you sure you want to delete this schedule?"
+  },
+  "camera": {
+    "title": "Camera",
+    "stream": "Camera Stream",
+    "noStream": "No stream available",
+    "takePhoto": "Take Photo",
+    "startRecording": "Start Recording",
+    "stopRecording": "Stop Recording",
+    "error": "Error loading stream",
+    "loading": "Camera is loading..."
+  }
+} 

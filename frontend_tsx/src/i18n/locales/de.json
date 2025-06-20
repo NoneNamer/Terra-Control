@@ -1,0 +1,128 @@
+{
+  "header": {
+    "title": "Terrarium Steuerung"
+  },
+  "home": {
+    "title": "Willkommen",
+    "description": "Steuern Sie Ihre Terrarium-Umgebung mit Präzision und Leichtigkeit.",
+    "feature1": {
+      "title": "Modernes Design",
+      "description": "Erstellt mit Tailwind CSS für ein responsives und ansprechendes Design."
+    },
+    "feature2": {
+      "title": "Mehrsprachig",
+      "description": "Unterstützung für mehrere Sprachen dank i18next."
+    }
+  },
+  "about": {
+    "title": "Über Uns",
+    "description": "Wir sind ein Team von Entwicklern, die moderne Webanwendungen erstellen.",
+    "mission": {
+      "title": "Unsere Mission",
+      "description": "Wir streben danach, die besten Webanwendungen zu entwickeln."
+    },
+    "vision": {
+      "title": "Unsere Vision",
+      "description": "Wir möchten die Zukunft der Webentwicklung gestalten."
+    }
+  },
+  "contact": {
+    "title": "Kontakt",
+    "form": {
+      "name": "Name",
+      "email": "E-Mail",
+      "message": "Nachricht",
+      "submit": "Absenden"
+    }
+  },
+  "terrarium": {
+    "title": "Terrarium Steuerung",
+    "currentReadings": "Aktuelle Messwerte",
+    "baskingTemp1": "Sonnenplatz Temperatur 1",
+    "baskingTemp2": "Sonnenplatz Temperatur 2",
+    "coolZoneTemp": "Kühlzone Temperatur",
+    "humidity": "Luftfeuchtigkeit",
+    "uvStatus": "UV-Status",
+    "today": "Heute",
+    "yesterday": "Gestern"
+  },
+  "led": {
+    "title": "LED Steuerung",
+    "manualOverride": "Manuelle Steuerung",
+    "overrideDescription": "Wenn die manuelle Steuerung aktiviert ist, verwendet das System die manuellen RGB- und Weiß-Einstellungen anstelle des natürlichen Lichtzyklus.",
+    "overrideNaturalLight": "Natürliches Licht überschreiben",
+    "ledPower": "LED Stromversorgung",
+    "red": "Rot",
+    "green": "Grün",
+    "blue": "Blau",
+    "warmWhite": "Warm weiß",
+    "coldWhite": "Kalt weiß",
+    "naturalLightCycle": "Natürlicher Lichtzyklus",
+    "seasonWeight": "Jahreszeit-Gewichtung",
+    "morning": "Morgen",
+    "noon": "Mittag",
+    "evening": "Abend",
+    "savePresets": "Voreinstellungen speichern",
+    "presetsSaved": "Voreinstellungen erfolgreich gespeichert",
+    "errorSavingPresets": "Fehler beim Speichern der Voreinstellungen",
+    "timeOfDay": "Tageszeit",
+    "lightPreview": "Lichtvorschau",
+    "presetManagement": "Voreinstellungen verwalten",
+    "warmW": "Warm W",
+    "coldW": "Kalt W",
+    "applySettings": "Einstellungen anwenden"
+  },
+  "data": {
+    "title": "Daten",
+    "recentLogs": "Aktuelle Log-Einträge",
+    "loadingLogs": "Lade Log-Einträge...",
+    "refreshLogs": "Logs aktualisieren",
+    "allEntries": "Alle Einträge",
+    "info": "Info",
+    "warnings": "Warnungen",
+    "errors": "Fehler",
+    "limit": "Limit",
+    "downloadData": "Daten herunterladen",
+    "logFiles": "Log-Dateien",
+    "downloadSystemLogFiles": "Laden Sie die System-Log-Dateien herunter",
+    "downloadLogs": "Logs herunterladen",
+    "sensorData": "Sensordaten",
+    "downloadHistoricalSensorReadings": "Laden Sie historische Sensordaten herunter",
+    "from": "Von",
+    "to": "Bis",
+    "downloadSensorData": "Sensordaten herunterladen"
+  },
+  "schedule": {
+    "title": "Zeitplan",
+    "createSchedule": "Zeitplan erstellen",
+    "editSchedule": "Zeitplan bearbeiten",
+    "deleteSchedule": "Zeitplan löschen",
+    "activeSchedules": "Aktive Zeitpläne",
+    "noSchedules": "Keine aktiven Zeitpläne",
+    "startTime": "Startzeit",
+    "endTime": "Endzeit",
+    "days": "Tage",
+    "actions": "Aktionen",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "confirmDelete": "Möchten Sie diesen Zeitplan wirklich löschen?"
+  },
+  "camera": {
+    "title": "Kamera",
+    "stream": "Kamera-Stream",
+    "noStream": "Kein Stream verfügbar",
+    "takePhoto": "Foto aufnehmen",
+    "startRecording": "Aufnahme starten",
+    "stopRecording": "Aufnahme stoppen",
+    "error": "Fehler beim Laden des Streams",
+    "loading": "Kamera wird geladen..."
+  },
+  "footer": {
+    "about": "Über Uns",
+    "aboutText": "Wir sind ein Duo von Entwicklern, die gerne an Sachen rumbasteln und ein kleines Netzwerk betreiben.",
+    "contact": "Kontakt",
+    "follow": "Folgen Sie uns",
+    "copyright": "Alle Rechte vorbehalten."
+  }
+} 
