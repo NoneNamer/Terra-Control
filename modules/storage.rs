@@ -1,21 +1,18 @@
+use crate::modules::models::{Data, Override, Schedule};
+use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::error::Error;
-use sqlx::sqlite::SqlitePoolOptions;
 
 /// Initializes the SQLite database connection and sets up required tables.
 ///
 /// This function:
 /// 1. Creates a connection pool to the SQLite database
 /// 2. Creates all necessary tables if they don't exist, including:
-///    - Schedule table for lighting schedules
-///    - Sensor data table for historical readings
-///    - Log table for system events
-///    - LED settings table for LED strip configuration
-///    - Overrides table for manual control overrides
-///
-/// # Returns
-///
-/// A Result containing either the SQLite connection pool or an error
+///    - `schedule`: For weekly lighting/heating, now with LED start/end times.
+///    - `sensor_history`: For historical sensor readings, matching the `Data` model.
+///    - `led_override`: A single-row table to store the current manual LED color override.
+///    - `logs`: For system events.
+
 pub async fn initialize_db() -> Result<SqlitePool, Box<dyn Error>> {
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
@@ -33,6 +30,8 @@ pub async fn initialize_db() -> Result<SqlitePool, Box<dyn Error>> {
             uv2_end TEXT NOT NULL,
             heat_start TEXT NOT NULL,
             heat_end TEXT NOT NULL,
+            led_start TEXT NOT NULL,
+            led_end TEXT NOT NULL,
             led_r INTEGER NOT NULL,
             led_g INTEGER NOT NULL,
             led_b INTEGER NOT NULL,
@@ -44,49 +43,46 @@ pub async fn initialize_db() -> Result<SqlitePool, Box<dyn Error>> {
     .execute(&pool)
     .await?;
 
+    // Create the sensor history table to match the 'Data' struct
     sqlx::query(
         r#"
-        CREATE TABLE IF NOT EXISTS overrides (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            uv1_enabled INTEGER NOT NULL,
-            uv2_enabled INTEGER NOT NULL,
-            heat_enabled INTEGER NOT NULL,
-            led_enabled INTEGER NOT NULL
-        )
-        "#,
-    )
-    .execute(&pool)
-    .await?;
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS history (
+        CREATE TABLE IF NOT EXISTS sensor_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
-            temperature REAL,
+            temp_basking1 REAL,
+            temp_basking2 REAL,
+            temp_cool REAL,
             humidity REAL,
-            uv_index REAL
+            time_heat TEXT,
+            overheat TEXT
         )
         "#,
     )
     .execute(&pool)
     .await?;
 
-    // Create LED settings table
+    // Create a simple table for the LED override state, matching the 'Override' struct
     sqlx::query(
         r#"
-        CREATE TABLE IF NOT EXISTS led_settings (
+        CREATE TABLE IF NOT EXISTS led_override (
             id INTEGER PRIMARY KEY,
-            r INTEGER NOT NULL,
-            g INTEGER NOT NULL,
-            b INTEGER NOT NULL,
-            ww INTEGER NOT NULL,
-            cw INTEGER NOT NULL,
-            enabled INTEGER NOT NULL,
-            override INTEGER NOT NULL DEFAULT 0,
-            season_weight REAL NOT NULL DEFAULT 0.3
+            red INTEGER,
+            green INTEGER,
+            blue INTEGER,
+            cool_white INTEGER,
+            warm_white INTEGER,
+            active BOOLEAN NOT NULL
         )
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
+    // Insert a default, inactive override state so the row always exists
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO led_override (id, red, green, blue, cool_white, warm_white, active)
+        VALUES (1, 255, 0, 0, 0, 0, 0)
         "#,
     )
     .execute(&pool)
@@ -106,21 +102,11 @@ pub async fn initialize_db() -> Result<SqlitePool, Box<dyn Error>> {
     .execute(&pool)
     .await?;
 
-    // Insert default LED settings if not exists
-    sqlx::query(
-        r#"
-        INSERT OR IGNORE INTO led_settings (id, r, g, b, ww, cw, enabled, override, season_weight)
-        VALUES (1, 150, 150, 128, 128, 128, 1, 0, 0.3)
-        "#,
-    )
-    .execute(&pool)
-    .await?;
-
     Ok(pool)
 }
 
 impl Schedule {
-    pub async fn get_schedule(pool: &SqlitePool) -> Result<Vec<Schedule>, sqlx::Error> {
+    pub async fn get_schedules(pool: &SqlitePool) -> Result<Vec<Schedule>, sqlx::Error> {
         let schedules = sqlx::query_as!(
             Schedule,
             r#"
@@ -135,29 +121,30 @@ impl Schedule {
 }
 
 impl Override {
-    pub async fn get_overrides(pool: &SqlitePool) -> Result<Vec<Override>, sqlx::Error> {
-        let overrides = sqlx::query_as!(
+    pub async fn get_led_override(pool: &SqlitePool) -> Result<Option<Override>, sqlx::Error> {
+        let led_override = sqlx::query_as!(
             Override,
             r#"
-            SELECT * FROM overrides
+            SELECT * FROM led_override WHERE id = 1
             "#
         )
-        .fetch_all(pool)
+        .fetch_optional(pool)
         .await?;
 
-        Ok(overrides)
+        Ok(led_override)
     }
 }
 
-impl History {
+impl Data {
     pub async fn get_history_for_month(
         pool: &SqlitePool,
         month: String,
     ) -> Result<Vec<History>, sqlx::Error> {
         let history = sqlx::query_as!(
-            History,
+            Data,
             r#"
-            SELECT * FROM history
+            SELECT id, timestamp, temp_basking1, temp_basking2, temp_cool, humidity, time_heat, overheat 
+            FROM sensor_history
             WHERE strftime('%Y-%m', timestamp) = ?
             ORDER BY timestamp
             "#,
