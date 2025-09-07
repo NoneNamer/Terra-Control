@@ -13,7 +13,6 @@ The system manages lighting, heating, and environmental conditions while providi
 
 - **Monitoring**
   - Temperature and humidity tracking from multiple sensors
-  - UV level monitoring with dual sensors
   - Real-time data logging and historical data analysis
   
 - **User Interface**
@@ -28,7 +27,6 @@ The system manages lighting, heating, and environmental conditions while providi
 - Temperature Sensors:
   - DS18B20 temperature sensors (×2)
   - DHT22 temperature and humidity sensor
-- VEML6075 UV sensors (×2)
 - WS2805 LED strip for ambient lighting
 - Display: SSD1306 or SH1106 OLED Display
 - Power Management:
