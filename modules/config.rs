@@ -52,7 +52,8 @@ pub struct SensorConfig {
     pub basking_id: String,
     pub cool_id: String,
     pub enclosure_id: String,
-    #[allow(dead_code)] // used by the SHT3x driver (phase 2)
+    /// I²C address of the SHT3x (0x44, or 0x45 with ADDR pulled high)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // only read by the Pi backend
     pub sht3x_address: u16,
     pub interval_secs: u64,
     pub retries: u8,
@@ -79,13 +80,22 @@ pub struct LightControlConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // hardware fields are only read by the Pi backend
 pub struct LedConfig {
+    /// WS2805 DI of strip 1 (must be a PWM0 pin: GPIO18)
     pub data_pin_strip1: u8,
+    /// WS2805 DI of strip 2 (must be a PWM1 pin: GPIO13)
     pub data_pin_strip2: u8,
-    #[allow(dead_code)] // used by the WS2805 driver (phase 2)
+    /// WS2805 BI (backup data) lines, held low
+    pub backup_pin_strip1: u8,
+    pub backup_pin_strip2: u8,
     pub ic_count_strip1: usize,
-    #[allow(dead_code)]
     pub ic_count_strip2: usize,
+    /// Bit rate of the LED data signal
+    pub frequency_hz: u32,
+    /// Order in which the 5 channel bytes are sent per IC: permutation of "rgbwc"
+    /// (w = warm white, c = cold white)
+    pub channel_order: String,
     pub default_mode: LedMode,
     pub default_brightness: u8,
     pub season_weight: f32,
@@ -171,6 +181,8 @@ impl Config {
             ("relays.heat", self.relays.heat),
             ("led.data_pin_strip1", self.led.data_pin_strip1),
             ("led.data_pin_strip2", self.led.data_pin_strip2),
+            ("led.backup_pin_strip1", self.led.backup_pin_strip1),
+            ("led.backup_pin_strip2", self.led.backup_pin_strip2),
         ];
         if let Some(pin) = self.relays.led_psu {
             pins.push(("relays.led_psu", pin));
@@ -212,6 +224,27 @@ impl Config {
             bail!("light_control.restrike_pause_secs must be at least 900 (got {})", lc.restrike_pause_secs);
         }
 
+        // rpi_ws281x: channel 0 needs a PWM0 pin, channel 1 a PWM1 pin
+        if ![12, 18].contains(&self.led.data_pin_strip1) {
+            bail!("led.data_pin_strip1 must be a PWM0 pin (GPIO18 or 12), got {}", self.led.data_pin_strip1);
+        }
+        if ![13, 19].contains(&self.led.data_pin_strip2) {
+            bail!("led.data_pin_strip2 must be a PWM1 pin (GPIO13 or 19), got {}", self.led.data_pin_strip2);
+        }
+        if self.led.ic_count_strip1 == 0 && self.led.ic_count_strip2 > 0 {
+            bail!("strip 1 must be present if strip 2 is used (ic_count_strip1 = 0)");
+        }
+        if self.led.ic_count_strip1 > 1000 || self.led.ic_count_strip2 > 1000 {
+            bail!("led.ic_count_strip1/2 must be at most 1000");
+        }
+        if !(400_000..=1_200_000).contains(&self.led.frequency_hz) {
+            bail!("led.frequency_hz must be 400000-1200000 (got {})", self.led.frequency_hz);
+        }
+        crate::modules::gpio::parse_channel_order(&self.led.channel_order)
+            .map_err(|e| anyhow::anyhow!("led.channel_order: {e}"))?;
+        if self.sensors.sht3x_address != 0x44 && self.sensors.sht3x_address != 0x45 {
+            bail!("sensors.sht3x_address must be 0x44 or 0x45 (got {:#x})", self.sensors.sht3x_address);
+        }
         if self.led.default_brightness > 100 {
             bail!("led.default_brightness must be 0-100 (got {})", self.led.default_brightness);
         }

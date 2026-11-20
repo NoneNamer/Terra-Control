@@ -18,7 +18,9 @@ read it before making design changes and keep its roadmap checkboxes up to date.
 Phase 1 is done: the app builds without warnings and runs on Windows with simulated hardware
 (web UI on port 80). Still open:
 
-- `PiHardware` (Linux-only `cfg`) has never been compiled; WS2805 output and SHT3x are stubs (phase 2).
+- Phase 2 drivers (`PiHardware`: rpi_ws281x for WS2805, SHT3x over rppal I²C, 1-Wire sysfs) build
+  for aarch64 in Docker but are **untested on the Pi**. WS2805 channel order and data rate
+  (`[led] channel_order`, `frequency_hz`) are guesses until verified on the strip.
 - `static/api.js`, `schedule.html`, `data.html` still use the old API shape (phase 4). The current
   API: `GET /api/values`, `/api/graph/{today,yesterday}`, `/api/data/download?start&end`,
   `GET /api/schedule`, `GET|PUT|DELETE /api/schedule/{week}`, `/api/schedule/current`,
@@ -30,7 +32,7 @@ Phase 1 is done: the app builds without warnings and runs on Windows with simula
 
 ```bash
 cargo build                 # binary: terra-control (entry point main.rs, not src/)
-cargo test                  # so far: config.toml loads and validates
+cargo test                  # config validation, WS2805 packing, SHT3x CRC/decoding, w1_slave parsing
 cargo test <test_name>      # single test
 ```
 
@@ -40,9 +42,12 @@ cargo test <test_name>      # single test
   `DATABASE_URL` is needed). Schema changes go into a new file in `migrations/`; `sqlx::migrate!`
   embeds them and they run on startup. Never edit an applied migration.
 - Run on the PC: `cargo run`, then open http://localhost/. `config.toml` has `simulate = true`.
-- `rppal` only works on the Pi; non-Linux builds always use `SimulatedHardware`. The real build is cross-compiled for the Pi 3A+ in Docker
-  (phase 5, Dockerfile not written yet; `Dockerfile` is gitignored). Target is 64-bit Pi OS:
-  `aarch64-unknown-linux-gnu`. `rppal` is already a Linux-only dependency in `Cargo.toml`.
+- `rppal` and `rs_ws281x` are Linux-only dependencies; non-Linux builds always use
+  `SimulatedHardware`, so the Pi code is only compiled by the Docker build:
+  `docker build --output dist .` → `dist/terra-control` (64-bit Pi OS, `aarch64-unknown-linux-gnu`).
+  Run it after every change to `#[cfg(target_os = "linux")]` code. `rs_ws281x` needs clang (bindgen).
+- On the Pi the binary must run as root (rpi_ws281x uses `/dev/mem`), with `dtparam=audio=off`.
+  Pi setup steps are in `readme.md` ("Raspberry Pi einrichten").
 
 ## Architecture
 

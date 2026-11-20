@@ -25,7 +25,8 @@ anyhow = "1"                                                      # Error handli
 # Hardware access only exists on the Pi (Linux). Phase 1 puts it behind a
 # hardware trait with a simulation backend for Windows.
 [target.'cfg(target_os = "linux")'.dependencies]
-rppal = "0.22"                                                    # GPIO / I2C / PWM
+rppal = "0.22"                                                    # GPIO / I2C
+rs_ws281x = "0.5"                                                 # WS2805 output via rpi_ws281x (PWM + DMA)
 
 [[bin]]
 name = "terra-control"

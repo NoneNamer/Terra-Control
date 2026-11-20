@@ -5,8 +5,9 @@ Der Controller schaltet UV-Lampen und Wärmespot nach Wochenplan, steuert die LE
 Winterbeleuchtung mit tageszeitabhängigem Farbverlauf, misst Temperatur und Luftfeuchtigkeit
 und stellt alles über eine lokale Weboberfläche bereit.
 
-> **Stand (2026-11-20):** Phase 1 ist abgeschlossen: Die Software kompiliert und läuft am PC mit
-> simulierter Hardware. Sensor- und LED-Treiber für den Pi fehlen noch (Phase 2). Die Platinen sind gefertigt.
+> **Stand (2026-11-20):** Die Software läuft am PC mit simulierter Hardware. Die Treiber für den Pi
+> (1-Wire, SHT3x, WS2805) sind geschrieben und lassen sich für den Pi bauen, wurden aber noch nicht
+> auf dem Pi getestet (Phase 2). Die Platinen sind gefertigt.
 > Den aktuellen Arbeitsstand zeigt die [Roadmap](#roadmap).
 
 ---
@@ -54,7 +55,8 @@ und ist nur noch in der Git-Historie; für Phase 7 wird die Kamera neu umgesetzt
 | Relais | Aktiv-high. Verhalten beim Booten muss getestet werden |
 | Uhrzeit | DS3231-Echtzeituhr wird genutzt |
 | Zielsystem | **64-Bit Raspberry Pi OS** (`aarch64-unknown-linux-gnu`) |
-| Build | **Cross-Compiling für den Pi 3A+ in Docker**, Betrieb als **systemd-Dienst** |
+| Build | **Cross-Compiling für den Pi 3A+ in Docker** (`Dockerfile`), Betrieb als **systemd-Dienst** |
+| LED-Treiber | **rpi_ws281x** (über `rs_ws281x`, PWM + DMA auf GPIO18/13). Folge: Programm läuft als root, Analog-Audio aus |
 | Abhängigkeiten | Werden auf aktuelle Versionen gehoben (Axum, base64 …) |
 | Versionskontrolle | Git |
 
@@ -121,6 +123,86 @@ angesprochen (bis zur Verkabelung Platzhalter).
 
 ---
 
+## Raspberry Pi einrichten (64-Bit Raspberry Pi OS)
+
+### Programm bauen und kopieren
+
+Gebaut wird am PC in Docker (Cross-Compiling für `aarch64`):
+
+```bash
+docker build --output dist .
+```
+
+Danach liegt das Programm in `dist/terra-control`. Auf den Pi gehören drei Dinge in einen Ordner,
+z. B. `/opt/terrarium`: `terra-control`, `config.toml` und der Ordner `static/`.
+
+```bash
+scp -r dist/terra-control config.toml static <user>@<pi-ip>:/opt/terrarium/
+```
+
+Das Programm muss als **root** laufen: Der LED-Treiber (rpi_ws281x) braucht `/dev/mem`, und Port 80
+ist ein privilegierter Port.
+
+```bash
+cd /opt/terrarium && sudo ./terra-control
+```
+
+`data.db`, `logs/` und `temp/` entstehen im aktuellen Ordner. Ein systemd-Dienst folgt in Phase 5.
+
+### `/boot/firmware/config.txt`
+
+```ini
+dtparam=i2c_arm=on              # I²C für DS3231 und SHT3x
+dtoverlay=w1-gpio,gpiopin=26    # 1-Wire auf GPIO26
+dtoverlay=i2c-rtc,ds3231        # Echtzeituhr
+dtparam=audio=off               # PWM wird für die LED-Streifen gebraucht
+```
+
+SPI muss nicht aktiviert werden (J7 bzw. das W5500 wird in v1 nicht genutzt). Danach neu starten.
+
+### Prüfen
+
+- **1-Wire:** `ls /sys/bus/w1/devices/` zeigt drei Einträge `28-…` (DS18B20 und MAX31820 haben
+  denselben Family-Code). Zuordnen lassen sie sich, indem man einen Fühler in der Hand erwärmt und
+  `cat /sys/bus/w1/devices/28-…/temperature` vergleicht. Die IDs kommen nach `[sensors]` in `config.toml`.
+- **I²C:** `sudo apt install i2c-tools`, dann `i2cdetect -y 1`. Erwartet: `44` (SHT3x; `45`, wenn
+  ADDR auf High liegt) und `UU` auf `68` (DS3231, vom Kernel-Treiber belegt).
+- **Echtzeituhr:** `sudo hwclock -r` liest die DS3231. Damit sie beim Booten die Systemzeit setzt,
+  `fake-hwclock` entfernen (`sudo apt remove fake-hwclock`) und einmal bei funktionierendem NTP
+  `sudo hwclock -w` ausführen. Ob die Zeit nach einem Neustart ohne Netzwerk stimmt, muss getestet
+  werden (unter Bookworm verhindert ggf. eine Abfrage auf systemd in `/lib/udev/hwclock-set` das
+  Stellen der Uhr – dann diese Zeilen auskommentieren).
+
+### Erster Test mit echter Hardware
+
+In `config.toml`: `simulate = false` und `setup_mode = true`. Im Inbetriebnahme-Modus schaltet der
+Zeitplan nichts; die Lampen lassen sich nur per API schalten, der Überhitzungsschutz bleibt aktiv.
+Für die ersten Tests die 230-V-Lasten abklemmen.
+
+```bash
+curl http://<pi-ip>/api/values                       # Messwerte und Relaiszustände
+curl -X POST -H 'Content-Type: application/json' -d '{"on":true}' http://<pi-ip>/api/relays/uv1
+```
+
+**LED-Streifen:** Im Inbetriebnahme-Modus zeigen die LEDs die Farbe sofort, unabhängig vom
+Zeitfenster. Mit manueller Farbe und 100 % Helligkeit jeden Kanal einzeln testen:
+
+```bash
+curl -X POST -H 'Content-Type: application/json' -d '{"override_settings":true,"season_weight":0.3}' http://<pi-ip>/api/led/natural
+curl -X POST -H 'Content-Type: application/json' -d '{"brightness":100}' http://<pi-ip>/api/led/brightness
+curl -X POST -H 'Content-Type: application/json' -d '{"r":255,"g":0,"b":0,"ww":0,"cw":0}' http://<pi-ip>/api/led/color
+```
+
+- Leuchtet ein falscher Kanal, `channel_order` in `[led]` anpassen (Reihenfolge der 5 Bytes je IC,
+  `w` = warmweiß, `c` = kaltweiß).
+- **Timing:** rpi_ws281x kodiert jedes Bit mit drei PWM-Takten. Bei `frequency_hz = 800000` ist
+  eine 0 etwa 417 ns und eine 1 etwa 833 ns lang (High-Zeit). Laut dem alten Code dieses Projekts
+  erwartet der WS2805 eher ~300 ns für eine 0. Wenn Farben falsch oder zu hell sind oder flackern,
+  `frequency_hz = 1000000` (333/667 ns) probieren und mit dem Datenblatt abgleichen.
+- Die Datenleitungen haben keinen Pegelwandler (3,3 V an 24-V-Streifen, siehe Hardware-Hinweis 3).
+
+---
+
 ## Richtwerte Bartagame (Ausgangswerte, vor Nutzung prüfen)
 
 | Parameter | Richtwert |
@@ -143,6 +225,7 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 ├── main.rs              # Einstiegspunkt, startet Tasks, schaltet beim Beenden alles aus
 ├── config.toml          # Konfiguration
 ├── Cargo.toml           # Abhängigkeiten
+├── Dockerfile           # Cross-Compiling für den Pi (aarch64), Ausgabe nach dist/
 ├── migrations/          # SQLite-Schema (sqlx-Migrationen, beim Start automatisch angewendet)
 ├── modules/
 │   ├── mod.rs           # Modul-Einstieg
@@ -190,14 +273,16 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 - [x] `static/` über den Webserver ausliefern
 - [x] Module verdrahten, fehlende Typen ergänzen; Inbetriebnahme-Modus (`setup_mode`) mit `POST /api/relays/{uv1|uv2|heat}`
 - [x] Dashboard (`index.html`) an die neuen Messwerte angepasst
-- [ ] Pi-Backend (`#[cfg(target_os = "linux")]`) ist noch nicht kompiliert worden → spätestens mit dem Docker-Build (Phase 5)
+- [x] Pi-Backend (`#[cfg(target_os = "linux")]`) kompiliert (Docker-Build, Phase 2)
 - **Ziel:** `cargo build` läuft, die Weboberfläche startet am PC mit simulierten Werten
 
 ### Phase 2 – Sensoren & LED-Treiber
-- [ ] DS18B20 / MAX31820 über 1-Wire (sysfs, `w1-gpio` auf GPIO26) – Lesecode steht, am Pi testen
-- [ ] SHT3x über I²C
-- [ ] DS3231 als Systemzeit (`dtoverlay=i2c-rtc,ds3231`)
-- [ ] WS2805-Treiber für GPIO18/13 (PWM) klären und umsetzen
+- [x] DS18B20 / MAX31820 über 1-Wire (sysfs `temperature`, Rückfall auf `w1_slave` mit CRC-Prüfung)
+- [x] SHT3x über I²C (Einzelmessung, CRC-Prüfung)
+- [x] DS3231 als Systemzeit – Einrichtung beschrieben (kein Code nötig)
+- [x] WS2805-Treiber für GPIO18/13: rpi_ws281x, 5 Bytes je IC als RGB-Bytestrom, Kanalreihenfolge und Frequenz konfigurierbar, BI-Leitungen (GPIO17/19) auf Low
+- [x] Pi-Backend baut im Docker (Cross-Compiling vorgezogen aus Phase 5)
+- [ ] **Am Pi testen** (siehe „Raspberry Pi einrichten“): Fühler-IDs eintragen, Kanalreihenfolge und Timing der LEDs prüfen, RTC ohne Netzwerk
 - **Ziel:** echte Messwerte und LED-Ausgabe auf dem Pi
 
 ### Phase 3 – Sicherheit & Logik
@@ -214,7 +299,7 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 - **Ziel:** komplett im Browser bedienbar
 
 ### Phase 5 – Deployment
-- [ ] Dockerfile zum Cross-Compiling für den Pi 3A+
+- [x] Dockerfile zum Cross-Compiling für den Pi 3A+ (in Phase 2 vorgezogen)
 - [ ] systemd-Dienst mit automatischem Neustart
 - [ ] Log-Rotation / Datenbereinigung (`storage_days`)
 - **Ziel:** läuft dauerhaft auf dem Pi

@@ -42,10 +42,14 @@ overheat_cooldown_secs = 3000     # heat stays blocked for this long after an ov
 restrike_pause_secs = 900         # UV1/UV2 re-strike pause after switching off (phase 3)
 
 [led]
-data_pin_strip1 = 18              # J5 DI (GPIO17 = BI)
-data_pin_strip2 = 13              # J6 DI (GPIO19 = BI)
+data_pin_strip1 = 18              # J5 DI (PWM0)
+data_pin_strip2 = 13              # J6 DI (PWM1)
+backup_pin_strip1 = 17            # J5 BI, held low
+backup_pin_strip2 = 19            # J6 BI, held low
 ic_count_strip1 = 16              # WS2805 ICs per strip, 0 = strip not present
 ic_count_strip2 = 16
+frequency_hz = 800000             # data rate; check the timing on the real strip (readme)
+channel_order = "rgbwc"           # byte order per IC: r g b, w = warm white, c = cold white
 default_mode = "natural"          # "natural" (daily colour curve) or "manual"
 default_brightness = 50           # 0-100 %
 season_weight = 0.3               # 0.0-1.0 weight of the weekly base colour

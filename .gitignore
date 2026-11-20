@@ -1,8 +1,7 @@
 target/
+dist/
 logs/
 temp/
-Dockerfile
 *.log
-.dockerignore
 data.db
 data.db-*

@@ -2,7 +2,8 @@
 //!
 //! Everything else talks to the `Hardware` trait. There are two backends:
 //! - `SimulatedHardware`: runs anywhere, with a simple thermal model for the sensors
-//! - `PiHardware` (Linux only): rppal GPIO for the relays, sysfs for 1-Wire
+//! - `PiHardware` (Linux only): rppal GPIO (relays, BI lines), rpi_ws281x (WS2805 via PWM+DMA),
+//!   sysfs (1-Wire), rppal I²C (SHT3x)
 
 use crate::modules::config::Config;
 use crate::modules::models::Rgbww;
@@ -212,6 +213,120 @@ impl Hardware for SimulatedHardware {
     }
 }
 
+// ===== Protocol helpers (platform independent, unit tested) =====
+
+/// One colour channel of a WS2805 IC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedChannel {
+    R,
+    G,
+    B,
+    WarmWhite,
+    ColdWhite,
+}
+
+/// Parses the byte order of the 5 channels, e.g. "rgbwc" (w = warm white, c = cold white).
+pub fn parse_channel_order(s: &str) -> Result<[LedChannel; 5], String> {
+    let chars: Vec<char> = s.trim().to_ascii_lowercase().chars().collect();
+    if chars.len() != 5 {
+        return Err(format!("'{s}' must have exactly 5 letters out of r, g, b, w, c"));
+    }
+    let mut order = [LedChannel::R; 5];
+    for (i, c) in chars.iter().enumerate() {
+        order[i] = match c {
+            'r' => LedChannel::R,
+            'g' => LedChannel::G,
+            'b' => LedChannel::B,
+            'w' => LedChannel::WarmWhite,
+            'c' => LedChannel::ColdWhite,
+            other => return Err(format!("'{s}': unknown channel '{other}' (use r, g, b, w, c)")),
+        };
+        if chars[..i].contains(c) {
+            return Err(format!("'{s}': channel '{c}' appears twice"));
+        }
+    }
+    Ok(order)
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // used by the Pi backend
+fn channel_value(color: Rgbww, channel: LedChannel) -> u8 {
+    match channel {
+        LedChannel::R => color.r,
+        LedChannel::G => color.g,
+        LedChannel::B => color.b,
+        LedChannel::WarmWhite => color.ww,
+        LedChannel::ColdWhite => color.cw,
+    }
+}
+
+/// Packs `ic_count` WS2805 ICs (5 bytes each) into 3-byte "RGB pixels" for rpi_ws281x.
+///
+/// rpi_ws281x only knows 3/4-byte pixels. With strip type WS2811_STRIP_RGB it sends the bytes
+/// of each pixel as R, G, B, so the 40-bit WS2805 frames can be laid out back to back. The last
+/// pixel is padded with zeros; those bits run past the last IC and are ignored.
+/// Returns 0x00RRGGBB words (the layout of `ws2811_led_t`).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // used by the Pi backend
+pub fn pack_ws2805(color: Rgbww, ic_count: usize, order: &[LedChannel; 5]) -> Vec<u32> {
+    let frame: Vec<u8> = order.iter().map(|ch| channel_value(color, *ch)).collect();
+    let bytes: Vec<u8> = frame.iter().copied().cycle().take(ic_count * 5).collect();
+    bytes
+        .chunks(3)
+        .map(|c| {
+            let get = |i: usize| c.get(i).copied().unwrap_or(0) as u32;
+            (get(0) << 16) | (get(1) << 8) | get(2)
+        })
+        .collect()
+}
+
+/// Number of rpi_ws281x pixels needed for `ic_count` WS2805 ICs.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // used by the Pi backend
+pub fn ws2805_pixel_count(ic_count: usize) -> usize {
+    (ic_count * 5).div_ceil(3)
+}
+
+/// CRC-8 of the SHT3x (polynomial 0x31, init 0xFF).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // used by the Pi backend
+pub fn sht3x_crc8(data: &[u8]) -> u8 {
+    let mut crc: u8 = 0xFF;
+    for byte in data {
+        crc ^= byte;
+        for _ in 0..8 {
+            crc = if crc & 0x80 != 0 { (crc << 1) ^ 0x31 } else { crc << 1 };
+        }
+    }
+    crc
+}
+
+/// Decodes the 6-byte SHT3x measurement (T msb, T lsb, CRC, RH msb, RH lsb, CRC).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // used by the Pi backend
+pub fn sht3x_decode(buf: &[u8; 6]) -> Result<Climate> {
+    if sht3x_crc8(&buf[0..2]) != buf[2] || sht3x_crc8(&buf[3..5]) != buf[5] {
+        anyhow::bail!("SHT3x CRC mismatch");
+    }
+    let raw_t = u16::from_be_bytes([buf[0], buf[1]]) as f32;
+    let raw_rh = u16::from_be_bytes([buf[3], buf[4]]) as f32;
+    Ok(Climate {
+        temperature: -45.0 + 175.0 * raw_t / 65535.0,
+        humidity: (100.0 * raw_rh / 65535.0).clamp(0.0, 100.0),
+    })
+}
+
+/// Parses the classic `w1_slave` file of a DS18B20 / MAX31820 (°C).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // used by the Pi backend
+pub fn parse_w1_slave(text: &str) -> Result<f32> {
+    let mut lines = text.lines();
+    let crc_line = lines.next().unwrap_or_default();
+    if !crc_line.trim_end().ends_with("YES") {
+        anyhow::bail!("1-Wire CRC check failed");
+    }
+    let value = lines
+        .next()
+        .and_then(|l| l.split("t=").nth(1))
+        .ok_or_else(|| anyhow::anyhow!("no temperature in w1_slave"))?;
+    let milli: i32 = value.trim().parse()?;
+    Ok(milli as f32 / 1000.0)
+}
+
 // ===== Raspberry Pi =====
 
 #[cfg(target_os = "linux")]
@@ -219,13 +334,76 @@ mod pi {
     use super::*;
     use anyhow::{bail, Context};
     use rppal::gpio::{Gpio, OutputPin};
+    use rppal::i2c::I2c;
+    use rs_ws281x::{ChannelBuilder, Controller, ControllerBuilder, StripType};
+    use std::time::Duration;
+
+    /// DMA channel used by rpi_ws281x (10 is the recommended free channel)
+    const DMA_CHANNEL: i32 = 10;
+    /// SHT3x single shot, high repeatability, no clock stretching
+    const SHT3X_MEASURE: [u8; 2] = [0x24, 0x00];
+
+    /// rpi_ws281x controller. It holds raw pointers and is therefore not `Send`; all access
+    /// goes through the `SharedHardware` mutex, so moving it between threads is fine.
+    struct LedOutput {
+        controller: Controller,
+        order: [LedChannel; 5],
+        ic_counts: [usize; 2],
+    }
+
+    // SAFETY: the controller is only ever used by one thread at a time (behind the hardware
+    // mutex) and rpi_ws281x keeps no thread-local state.
+    unsafe impl Send for LedOutput {}
+
+    impl LedOutput {
+        fn new(config: &Config) -> Result<Self> {
+            let led = &config.led;
+            let order = parse_channel_order(&led.channel_order).map_err(anyhow::Error::msg)?;
+            let channel = |pin: u8, ics: usize| {
+                let (pin, count) = if ics == 0 { (0, 0) } else { (pin as i32, ws2805_pixel_count(ics) as i32) };
+                ChannelBuilder::new()
+                    .pin(pin)
+                    .count(count)
+                    .strip_type(StripType::Ws2811Rgb)
+                    .brightness(255) // 255 = no scaling in rpi_ws281x
+                    .build()
+            };
+            let controller = ControllerBuilder::new()
+                .freq(led.frequency_hz)
+                .dma(DMA_CHANNEL)
+                .channel(0, channel(led.data_pin_strip1, led.ic_count_strip1))
+                .channel(1, channel(led.data_pin_strip2, led.ic_count_strip2))
+                .build()
+                .map_err(|e| anyhow::anyhow!("rpi_ws281x init failed: {e:?} (running as root? audio off?)"))?;
+            Ok(LedOutput { controller, order, ic_counts: [led.ic_count_strip1, led.ic_count_strip2] })
+        }
+
+        fn write(&mut self, color: Rgbww) -> Result<()> {
+            for (channel, ics) in self.ic_counts.into_iter().enumerate() {
+                if ics == 0 {
+                    continue;
+                }
+                let words = pack_ws2805(color, ics, &self.order);
+                for (led, word) in self.controller.leds_mut(channel).iter_mut().zip(words) {
+                    // ws2811_led_t is a native-endian u32 (0x00RRGGBB)
+                    *led = word.to_ne_bytes();
+                }
+            }
+            self.controller.render().map_err(|e| anyhow::anyhow!("LED render failed: {e:?}"))?;
+            self.controller.wait().map_err(|e| anyhow::anyhow!("LED render wait failed: {e:?}"))?;
+            Ok(())
+        }
+    }
 
     pub struct PiHardware {
         uv1: OutputPin,
         uv2: OutputPin,
         heat: OutputPin,
         led_psu: Option<OutputPin>,
-        leds: Rgbww,
+        /// WS2805 BI lines, kept low for the lifetime of the program
+        _backup_pins: [OutputPin; 2],
+        leds: Option<LedOutput>,
+        i2c: I2c,
     }
 
     impl PiHardware {
@@ -235,15 +413,23 @@ mod pi {
             let output = |pin: u8| -> Result<OutputPin> {
                 Ok(gpio.get(pin).with_context(|| format!("GPIO {pin} unavailable"))?.into_output_low())
             };
-            let hw = PiHardware {
-                uv1: output(config.relays.uv1)?,
-                uv2: output(config.relays.uv2)?,
-                heat: output(config.relays.heat)?,
-                led_psu: config.relays.led_psu.map(output).transpose()?,
-                leds: Rgbww::OFF,
+            let uv1 = output(config.relays.uv1)?;
+            let uv2 = output(config.relays.uv2)?;
+            let heat = output(config.relays.heat)?;
+            let led_psu = config.relays.led_psu.map(output).transpose()?;
+            let backup_pins = [output(config.led.backup_pin_strip1)?, output(config.led.backup_pin_strip2)?];
+
+            let leds = if config.led.ic_count_strip1 == 0 {
+                None
+            } else {
+                Some(LedOutput::new(config)?)
             };
-            eprintln!("WS2805 driver and SHT3x are not implemented yet (phase 2)");
-            Ok(hw)
+
+            let mut i2c = I2c::new().context("failed to open I2C bus 1 (dtparam=i2c_arm=on?)")?;
+            i2c.set_slave_address(config.sensors.sht3x_address)
+                .with_context(|| format!("invalid SHT3x address {:#x}", config.sensors.sht3x_address))?;
+
+            Ok(PiHardware { uv1, uv2, heat, led_psu, _backup_pins: backup_pins, leds, i2c })
         }
 
         fn pin(&mut self, relay: Relay) -> Option<&mut OutputPin> {
@@ -282,26 +468,103 @@ mod pi {
         }
 
         fn write_leds(&mut self, color: Rgbww) -> Result<()> {
-            // TODO(phase 2): WS2805 output on GPIO18/13 (PWM)
-            self.leds = color;
-            Ok(())
+            match self.leds.as_mut() {
+                Some(leds) => leds.write(color),
+                None => Ok(()), // no strip configured
+            }
         }
 
         fn read_onewire(&mut self, sensor_id: &str) -> Result<f32> {
-            // w1-gpio overlay on GPIO26; the kernel exposes millidegrees Celsius
-            let path = format!("/sys/bus/w1/devices/{sensor_id}/temperature");
-            let raw = std::fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
-            let milli: i32 = raw.trim().parse().with_context(|| format!("invalid value in {path}"))?;
-            // 85 °C is the DS18B20 power-on value and means "no conversion happened"
-            if milli == 85_000 {
+            // w1-gpio overlay on GPIO26. Newer kernels offer `temperature` (millidegrees);
+            // fall back to the classic `w1_slave` file with CRC check.
+            let dir = format!("/sys/bus/w1/devices/{sensor_id}");
+            let celsius = match std::fs::read_to_string(format!("{dir}/temperature")) {
+                Ok(raw) => {
+                    let milli: i32 = raw.trim().parse().with_context(|| format!("invalid value in {dir}/temperature"))?;
+                    milli as f32 / 1000.0
+                }
+                Err(_) => {
+                    let text = std::fs::read_to_string(format!("{dir}/w1_slave"))
+                        .with_context(|| format!("1-Wire sensor {sensor_id} not found"))?;
+                    parse_w1_slave(&text)?
+                }
+            };
+            // 85 °C is the power-on value and means "no conversion happened"
+            if celsius == 85.0 {
                 bail!("sensor {sensor_id} returned its power-on value (85 °C)");
             }
-            Ok(milli as f32 / 1000.0)
+            if !(-55.0..=125.0).contains(&celsius) {
+                bail!("sensor {sensor_id} returned an impossible value ({celsius} °C)");
+            }
+            Ok(celsius)
         }
 
         fn read_climate(&mut self) -> Result<Climate> {
-            // TODO(phase 2): SHT3x over I²C
-            bail!("SHT3x driver not implemented yet")
+            self.i2c.write(&SHT3X_MEASURE).context("SHT3x: measure command failed")?;
+            // High repeatability needs up to 15 ms
+            std::thread::sleep(Duration::from_millis(20));
+            let mut buf = [0u8; 6];
+            self.i2c.read(&mut buf).context("SHT3x: read failed")?;
+            sht3x_decode(&buf)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_order_parsing() {
+        assert_eq!(
+            parse_channel_order("RGBwc").unwrap(),
+            [LedChannel::R, LedChannel::G, LedChannel::B, LedChannel::WarmWhite, LedChannel::ColdWhite]
+        );
+        assert!(parse_channel_order("rgbw").is_err());
+        assert!(parse_channel_order("rgbwx").is_err());
+        assert!(parse_channel_order("rrbwc").is_err());
+    }
+
+    #[test]
+    fn ws2805_packing_lays_frames_back_to_back() {
+        let order = parse_channel_order("grbwc").unwrap();
+        let color = Rgbww { r: 1, g: 2, b: 3, ww: 4, cw: 5 };
+        // 2 ICs = 10 bytes: 2 1 3 4 5 2 1 3 4 5 -> 4 pixels, last one padded
+        let words = pack_ws2805(color, 2, &order);
+        assert_eq!(words, vec![0x020103, 0x040502, 0x010304, 0x050000]);
+        assert_eq!(ws2805_pixel_count(2), 4);
+        assert_eq!(ws2805_pixel_count(3), 5);
+        assert_eq!(pack_ws2805(color, 3, &order).len(), 5);
+        assert!(pack_ws2805(color, 0, &order).is_empty());
+    }
+
+    #[test]
+    fn sht3x_crc_matches_datasheet_example() {
+        // Datasheet: CRC of 0xBEEF is 0x92
+        assert_eq!(sht3x_crc8(&[0xBE, 0xEF]), 0x92);
+    }
+
+    #[test]
+    fn sht3x_decoding() {
+        // raw T = 0x6666 -> 25.0 °C, raw RH = 0x8000 -> 50.0 %
+        let t = [0x66, 0x66];
+        let rh = [0x80, 0x00];
+        let buf = [t[0], t[1], sht3x_crc8(&t), rh[0], rh[1], sht3x_crc8(&rh)];
+        let c = sht3x_decode(&buf).unwrap();
+        assert!((c.temperature - 25.0).abs() < 0.01, "{}", c.temperature);
+        assert!((c.humidity - 50.0).abs() < 0.01, "{}", c.humidity);
+        let mut bad = buf;
+        bad[2] ^= 1;
+        assert!(sht3x_decode(&bad).is_err());
+    }
+
+    #[test]
+    fn w1_slave_parsing() {
+        let ok = "72 01 4b 46 7f ff 0e 10 57 : crc=57 YES\n72 01 4b 46 7f ff 0e 10 57 t=23125\n";
+        assert_eq!(parse_w1_slave(ok).unwrap(), 23.125);
+        let bad = "72 01 4b 46 7f ff 0e 10 57 : crc=57 NO\n72 01 4b 46 7f ff 0e 10 57 t=23125\n";
+        assert!(parse_w1_slave(bad).is_err());
+        let negative = "aa : crc=aa YES\naa t=-1250\n";
+        assert_eq!(parse_w1_slave(negative).unwrap(), -1.25);
     }
 }
