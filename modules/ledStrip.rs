@@ -116,3 +116,97 @@ pub async fn run(state: AppState) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::models::{parse_time, TimeWindow};
+
+    fn presets() -> LedPresets {
+        LedPresets {
+            morning: Rgbww { r: 200, g: 100, b: 0, ww: 200, cw: 0 },
+            noon: Rgbww { r: 100, g: 100, b: 100, ww: 100, cw: 200 },
+            evening: Rgbww { r: 250, g: 50, b: 0, ww: 250, cw: 0 },
+        }
+    }
+
+    fn schedule(led: Option<(&str, &str)>) -> WeekSchedule {
+        WeekSchedule {
+            uv1: None,
+            uv2: None,
+            heat: None,
+            led: led.map(|(on, off)| TimeWindow { on: parse_time(on).unwrap(), off: parse_time(off).unwrap() }),
+            led_color: Rgbww { r: 0, g: 0, b: 255, ww: 0, cw: 0 },
+        }
+    }
+
+    fn settings(mode: LedMode, brightness: u8, season_weight: f32) -> LedSettings {
+        LedSettings {
+            enabled: true,
+            mode,
+            manual_color: Rgbww { r: 10, g: 20, b: 30, ww: 40, cw: 50 },
+            brightness,
+            season_weight,
+        }
+    }
+
+    fn t(s: &str) -> NaiveTime {
+        parse_time(s).unwrap()
+    }
+
+    #[test]
+    fn daily_curve_runs_morning_noon_evening() {
+        let p = presets();
+        assert_eq!(natural_color(&p, 0.0), p.morning);
+        assert_eq!(natural_color(&p, 0.5), p.noon);
+        assert_eq!(natural_color(&p, 1.0), p.evening);
+        // Halfway between morning and noon
+        assert_eq!(natural_color(&p, 0.25), Rgbww { r: 150, g: 100, b: 50, ww: 150, cw: 100 });
+        // Out-of-range progress is clamped
+        assert_eq!(natural_color(&p, -1.0), p.morning);
+        assert_eq!(natural_color(&p, 2.0), p.evening);
+    }
+
+    #[test]
+    fn leds_follow_the_schedule_window() {
+        let led = LedController::new(settings(LedMode::Natural, 100, 0.0), presets());
+        let s = schedule(Some(("06:00", "18:00")));
+        assert_eq!(led.target_color(&s, t("05:59"), false), Rgbww::OFF);
+        assert_eq!(led.target_color(&s, t("06:00"), false), presets().morning);
+        assert_eq!(led.target_color(&s, t("12:00"), false), presets().noon);
+        assert_eq!(led.target_color(&s, t("18:00"), false), Rgbww::OFF);
+        // No LED window this week: off all day
+        assert_eq!(led.target_color(&schedule(None), t("12:00"), false), Rgbww::OFF);
+    }
+
+    #[test]
+    fn weekly_colour_is_mixed_in_by_season_weight() {
+        let led = LedController::new(settings(LedMode::Natural, 100, 0.5), presets());
+        let c = led.target_color(&schedule(Some(("06:00", "18:00"))), t("12:00"), false);
+        // noon (100,100,100,100,200) mixed 50 % with weekly blue (0,0,255,0,0)
+        assert_eq!(c, Rgbww { r: 50, g: 50, b: 178, ww: 50, cw: 100 });
+    }
+
+    #[test]
+    fn manual_mode_replaces_the_colour_and_brightness_scales() {
+        let led = LedController::new(settings(LedMode::Manual, 50, 0.3), presets());
+        let s = schedule(Some(("06:00", "18:00")));
+        assert_eq!(led.target_color(&s, t("12:00"), false), Rgbww { r: 5, g: 10, b: 15, ww: 20, cw: 25 });
+        // The schedule still switches the LEDs off
+        assert_eq!(led.target_color(&s, t("20:00"), false), Rgbww::OFF);
+    }
+
+    #[test]
+    fn disabled_leds_stay_off_and_setup_mode_ignores_the_window() {
+        let mut off = settings(LedMode::Manual, 100, 0.0);
+        off.enabled = false;
+        let s = schedule(Some(("06:00", "18:00")));
+        assert_eq!(LedController::new(off, presets()).target_color(&s, t("12:00"), true), Rgbww::OFF);
+
+        let led = LedController::new(settings(LedMode::Manual, 100, 0.0), presets());
+        assert_eq!(led.target_color(&s, t("23:00"), true), settings(LedMode::Manual, 100, 0.0).manual_color);
+        // Natural mode outside the window shows the noon colour in setup mode
+        let led = LedController::new(settings(LedMode::Natural, 100, 0.0), presets());
+        assert_eq!(led.target_color(&schedule(None), t("23:00"), true), presets().noon);
+    }
+}

@@ -16,8 +16,10 @@ und stellt alles über eine lokale Weboberfläche bereit.
 
 - **Licht & Wärme**
   - UV1, UV2 und Wärmespot nach **Wochenplan** (ein Eintrag pro Kalenderwoche, KW 1–53)
-  - **Zündpause:** UV1 und UV2 dürfen nach dem Ausschalten frühestens nach 15 min wieder einschalten
+  - **Zündpause:** UV1 und UV2 dürfen nach dem Ausschalten frühestens nach 15 min wieder einschalten,
+    auch über einen Neustart hinweg (siehe unten)
   - **Überhitzungsschutz** für den Wärmespot (Abschaltung plus Sperrzeit)
+  - **Sicherer Zustand:** Ohne gültigen Messwert vom Sonnenplatz bleibt der Wärmespot aus
 - **LED-Beleuchtung** (Grund- und Winterbeleuchtung)
   - Ein- und Ausschaltzeit plus Grundfarbe pro Kalenderwoche aus dem Wochenplan
   - Innerhalb eines Tages wird der Farbverlauf berechnet (Morgen → Mittag → Abend)
@@ -56,6 +58,8 @@ und ist nur noch in der Git-Historie; für Phase 7 wird die Kamera neu umgesetzt
 | Uhrzeit | DS3231-Echtzeituhr wird genutzt |
 | Zielsystem | **64-Bit Raspberry Pi OS** (`aarch64-unknown-linux-gnu`) |
 | Build | **Cross-Compiling für den Pi 3A+ in Docker** (`Dockerfile`), Betrieb als **systemd-Dienst** |
+| Zündpause nach Neustart | Jeder Schaltvorgang von UV1/UV2 wird gespeichert (UTC). War eine Lampe beim Start laut DB noch **an** (Absturz, Stromausfall), gilt die **volle Pause ab Programmstart**. War sie aus, gilt die Restzeit seit dem Ausschalten |
+| Wärmespot-Sperre | Aus, solange kein Messwert vorliegt, der Fühler ausfällt, der letzte Wert älter als 3 Messintervalle ist, ab `overheat_temp` und während der Sperrzeit. Jeder Wert über der Grenze startet die Sperrzeit neu |
 | LED-Treiber | **rpi_ws281x** (über `rs_ws281x`, PWM + DMA auf GPIO18/13). Folge: Programm läuft als root, Analog-Audio aus |
 | Abhängigkeiten | Werden auf aktuelle Versionen gehoben (Axum, base64 …) |
 | Versionskontrolle | Git |
@@ -286,10 +290,12 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 - **Ziel:** echte Messwerte und LED-Ausgabe auf dem Pi
 
 ### Phase 3 – Sicherheit & Logik
-- [ ] Zündpause UV1/UV2 (≥ 15 min nach dem Ausschalten, auch nach einem Neustart)
-- [ ] Überhitzungsschutz Wärmespot testen
-- [ ] Sicherer Zustand bei Sensorausfall (Wärmespot aus) – umgesetzt (kein/zu alter Messwert sperrt den Spot), Tests fehlen
-- [ ] Unit-Tests für Zeitplan, Zündpause und LED-Verlauf
+- [x] Zündpause UV1/UV2 (≥ 15 min nach dem Ausschalten, auch nach einem Neustart; Tabelle `lamp_state`)
+- [x] Überhitzungsschutz Wärmespot getestet (Unit-Tests: Abschaltung, Sperrzeit, Neustart der Sperrzeit)
+- [x] Sicherer Zustand bei Sensorausfall (Wärmespot aus; auch bei veraltetem Messwert)
+- [x] Unit-Tests für Zeitplan, Zündpause, Überhitzung und LED-Verlauf (26 Tests, per eingebautem Fehler gegengeprüft)
+- [x] Zündpause und Sperrgrund im Dashboard bzw. in `/api/values` und `/api/system/status`
+- [ ] Am Pi: Überhitzungsschutz und Zündpause mit echter Hardware nachprüfen (Phase 6)
 - **Ziel:** Der Wärmespot schaltet nachweisbar sicher
 
 ### Phase 4 – Weboberfläche

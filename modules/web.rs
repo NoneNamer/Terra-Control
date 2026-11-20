@@ -56,7 +56,7 @@ mod handlers {
     pub mod monitoring {
         use super::*;
         use crate::modules::gpio::Relay;
-        use crate::modules::lightControl::HeatBlock;
+        use crate::modules::lightControl::{HeatBlock, RestrikeStatus};
         use crate::modules::logs;
         use crate::modules::storage;
         use axum::{extract::{Query, State}, http::header, routing::get};
@@ -88,14 +88,16 @@ mod handlers {
             led_on: bool,
             overheat: bool,
             heat_block: Option<HeatBlock>,
+            /// Remaining UV re-strike pause in seconds
+            restrike: RestrikeStatus,
         }
 
         async fn current_values(State(state): State<AppState>) -> Json<CurrentValues> {
             let readings = state.readings.read().await.clone();
-            let (overheat, heat_block) = {
+            let (overheat, heat_block, restrike) = {
                 let light = state.light.lock().await;
                 let now = Instant::now();
-                (light.is_overheat(now), light.heat_block(now))
+                (light.is_overheat(now), light.heat_block(now), light.restrike_status(now))
             };
             let led_on = !state.led.lock().await.output().is_off();
             let hw = state.hw.lock();
@@ -112,6 +114,7 @@ mod handlers {
                 led_on,
                 overheat,
                 heat_block,
+                restrike,
             })
         }
 
@@ -421,7 +424,7 @@ mod handlers {
 
     pub mod system {
         use super::*;
-        use crate::modules::lightControl::{self, HeatBlock, LampStates};
+        use crate::modules::lightControl::{self, HeatBlock, LampStates, RestrikeStatus};
         use crate::modules::logs::{self, Level};
         use axum::{
             extract::{Path, Query, State},
@@ -450,12 +453,14 @@ mod handlers {
             data_collection_interval: u64,
             desired: LampStates,
             heat_block: Option<HeatBlock>,
+            restrike: RestrikeStatus,
         }
 
         async fn status(State(state): State<AppState>) -> Json<SystemStatus> {
-            let (desired, heat_block) = {
+            let (desired, heat_block, restrike) = {
                 let light = state.light.lock().await;
-                (light.desired(), light.heat_block(Instant::now()))
+                let now = Instant::now();
+                (light.desired(), light.heat_block(now), light.restrike_status(now))
             };
             Json(SystemStatus {
                 version: env!("CARGO_PKG_VERSION"),
@@ -466,6 +471,7 @@ mod handlers {
                 data_collection_interval: state.config.sensors.interval_secs,
                 desired,
                 heat_block,
+                restrike,
             })
         }
 

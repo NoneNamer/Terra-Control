@@ -26,13 +26,15 @@ Phase 1 is done: the app builds without warnings and runs on Windows with simula
   `GET /api/schedule`, `GET|PUT|DELETE /api/schedule/{week}`, `/api/schedule/current`,
   `/api/led/{status,power,color,natural,brightness,presets}`, `/api/system/status`, `/api/logs`,
   `/api/logs/download`, `POST /api/relays/{uv1|uv2|heat}` (setup mode only).
-- UV re-strike pause is configured (`restrike_pause_secs`) but not enforced yet (phase 3).
+- Phase 3 safety logic is done and unit tested (`lightControl.rs` tests use a `FakeHw`; time is
+  passed in as `Instant`, so tests never sleep). Keep it that way: every safety rule needs a test.
 
 ## Commands
 
 ```bash
 cargo build                 # binary: terra-control (entry point main.rs, not src/)
-cargo test                  # config validation, WS2805 packing, SHT3x CRC/decoding, w1_slave parsing
+cargo test                  # 26 tests: config, schedule/time windows, heat safety, re-strike pause,
+                            # LED curve, WS2805 packing, SHT3x, w1_slave
 cargo test <test_name>      # single test
 ```
 
@@ -64,6 +66,11 @@ cargo test <test_name>      # single test
 - **Heat safety:** `LightController::heat_block` keeps the heat spot off with no reading yet, on
   sensor failure / stale value (> 3 intervals), at/above `overheat_temp`, and during the cooldown.
   Relay changes go through `lightControl::apply_and_log`; web handlers call the same functions.
+- **Re-strike pause (UV1/UV2):** `LightController::apply` starts the pause whenever a UV relay
+  goes off; `apply_and_log` stores each UV change in `lamp_state` (UTC). At startup
+  `restore_restrike` rebuilds the pause: last state "on" (crash / power loss) → full pause from
+  now, "off" → remaining time. `main.rs` records the off state on shutdown. Setup mode respects
+  the pause too.
 - **Schedule model:** one row per ISO calendar week (KW 1–53) with UV1/UV2/heat on/off times and LED
   on/off times + base colour. Only the LED colour is interpolated *within a day*
   (morning → noon → evening presets in `[led]` of `config.toml`, mixed with the weekly colour via

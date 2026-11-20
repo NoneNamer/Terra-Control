@@ -247,3 +247,111 @@ pub struct LedSettings {
     pub brightness: u8,
     pub season_weight: f32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t(s: &str) -> NaiveTime {
+        parse_time(s).unwrap()
+    }
+
+    fn window(on: &str, off: &str) -> TimeWindow {
+        TimeWindow::parse_pair("x", Some(on), Some(off)).unwrap().unwrap()
+    }
+
+    #[test]
+    fn window_contains_start_but_not_end() {
+        let w = window("06:30", "19:00");
+        assert!(!w.contains(t("06:29")));
+        assert!(w.contains(t("06:30")));
+        assert!(w.contains(t("18:59")));
+        assert!(!w.contains(t("19:00")));
+    }
+
+    #[test]
+    fn window_can_span_midnight() {
+        let w = window("22:00", "02:00");
+        assert!(w.contains(t("23:30")));
+        assert!(w.contains(t("00:00")));
+        assert!(w.contains(t("01:59")));
+        assert!(!w.contains(t("02:00")));
+        assert!(!w.contains(t("12:00")));
+        assert_eq!(w.progress(t("00:00")), Some(0.5));
+    }
+
+    #[test]
+    fn window_progress() {
+        let w = window("06:00", "18:00");
+        assert_eq!(w.progress(t("06:00")), Some(0.0));
+        assert_eq!(w.progress(t("12:00")), Some(0.5));
+        assert_eq!(w.progress(t("15:00")), Some(0.75));
+        assert_eq!(w.progress(t("18:00")), None);
+        assert_eq!(w.progress(t("05:00")), None);
+    }
+
+    #[test]
+    fn time_pairs_must_be_complete_and_valid() {
+        assert_eq!(TimeWindow::parse_pair("uv1", None, None), Ok(None));
+        assert!(TimeWindow::parse_pair("uv1", Some("06:00"), None).is_err());
+        assert!(TimeWindow::parse_pair("uv1", Some("25:00"), Some("10:00")).is_err());
+        assert!(TimeWindow::parse_pair("uv1", Some("06:00"), Some("06:00")).is_err());
+        assert!(TimeWindow::parse_pair("uv1", Some("6:5"), Some("10:00")).is_ok(), "chrono accepts 6:5");
+    }
+
+    fn row() -> ScheduleRow {
+        ScheduleRow {
+            week: 12,
+            uv1_on: Some("06:30".into()),
+            uv1_off: Some("19:00".into()),
+            uv2_on: Some("".into()),
+            uv2_off: Some(" ".into()),
+            heat_on: None,
+            heat_off: None,
+            led_on: Some("6:00".into()),
+            led_off: Some("20:00".into()),
+            led_r: 1,
+            led_g: 2,
+            led_b: 3,
+            led_ww: 4,
+            led_cw: 5,
+        }
+    }
+
+    #[test]
+    fn schedule_row_validation_and_normalisation() {
+        let s = row().to_week_schedule().unwrap();
+        assert_eq!(s.uv1, Some(window("06:30", "19:00")));
+        assert_eq!(s.uv2, None, "empty strings from forms mean off");
+        assert_eq!(s.heat, None);
+        assert_eq!(s.led_color, Rgbww { r: 1, g: 2, b: 3, ww: 4, cw: 5 });
+
+        let normalised = ScheduleRow::from_week_schedule(12, &s);
+        assert_eq!(normalised.led_on.as_deref(), Some("06:00"));
+        assert_eq!(normalised.uv2_on, None);
+        assert_eq!(normalised.to_week_schedule().unwrap(), s);
+
+        let mut bad = row();
+        bad.week = 54;
+        assert!(bad.to_week_schedule().is_err());
+        let mut bad = row();
+        bad.led_cw = 256;
+        assert!(bad.to_week_schedule().is_err());
+        let mut bad = row();
+        bad.heat_on = Some("10:00".into());
+        assert!(bad.to_week_schedule().is_err(), "half a time pair");
+    }
+
+    #[test]
+    fn colour_mixing_and_brightness() {
+        let a = Rgbww { r: 0, g: 100, b: 200, ww: 255, cw: 10 };
+        let b = Rgbww { r: 100, g: 100, b: 0, ww: 0, cw: 20 };
+        assert_eq!(a.mix(&b, 0.0), a);
+        assert_eq!(a.mix(&b, 1.0), b);
+        assert_eq!(a.mix(&b, 0.5), Rgbww { r: 50, g: 100, b: 100, ww: 128, cw: 15 });
+        assert_eq!(a.scaled(100), a);
+        assert_eq!(a.scaled(0), Rgbww::OFF);
+        assert_eq!(a.scaled(50), Rgbww { r: 0, g: 50, b: 100, ww: 128, cw: 5 });
+        assert_eq!(a.scaled(200), a, "brightness is capped at 100 %");
+    }
+}

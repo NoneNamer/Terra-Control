@@ -109,8 +109,9 @@
                 document.getElementById('enclosureTemp').textContent = fmt(data.enclosureTemp);
 
                 const onOff = v => v ? '✅ on' : '❌ off';
-                document.getElementById('UV1Status').textContent = onOff(data.uv1On);
-                document.getElementById('UV2Status').textContent = onOff(data.uv2On);
+                const restrike = secs => secs ? ` (re-strike pause: ${Math.ceil(secs / 60)} min)` : '';
+                document.getElementById('UV1Status').textContent = onOff(data.uv1On) + restrike(data.restrike.uv1);
+                document.getElementById('UV2Status').textContent = onOff(data.uv2On) + restrike(data.restrike.uv2);
                 document.getElementById('heatStatus').textContent = onOff(data.heatOn);
                 document.getElementById('ledStatus').textContent = onOff(data.ledOn);
                 document.getElementById('heatBlock').textContent =

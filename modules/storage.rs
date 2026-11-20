@@ -5,7 +5,7 @@ use crate::modules::models::{
     LedMode, LedPresets, LedSettings, Readings, Rgbww, ScheduleRow, WeekSchedule, TIMESTAMP_FORMAT,
 };
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{FromRow, SqlitePool};
 use std::str::FromStr;
@@ -152,6 +152,38 @@ pub async fn get_readings(pool: &SqlitePool, start: NaiveDate, end: NaiveDate) -
     .bind(to)
     .fetch_all(pool)
     .await?)
+}
+
+// ===== Lamp state (re-strike pause) =====
+
+#[derive(Debug, Clone)]
+pub struct LampStateRow {
+    pub relay: String,
+    pub is_on: bool,
+    pub changed_at: DateTime<Utc>,
+}
+
+pub async fn save_lamp_state(pool: &SqlitePool, relay: &str, is_on: bool, at: DateTime<Utc>) -> Result<()> {
+    sqlx::query("INSERT OR REPLACE INTO lamp_state (relay, is_on, changed_at) VALUES (?, ?, ?)")
+        .bind(relay)
+        .bind(is_on)
+        .bind(at.to_rfc3339())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn load_lamp_states(pool: &SqlitePool) -> Result<Vec<LampStateRow>> {
+    let rows: Vec<(String, bool, String)> =
+        sqlx::query_as("SELECT relay, is_on, changed_at FROM lamp_state").fetch_all(pool).await?;
+    rows.into_iter()
+        .map(|(relay, is_on, changed_at)| {
+            let changed_at = DateTime::parse_from_rfc3339(&changed_at)
+                .with_context(|| format!("invalid changed_at '{changed_at}' for {relay}"))?
+                .with_timezone(&Utc);
+            Ok(LampStateRow { relay, is_on, changed_at })
+        })
+        .collect()
 }
 
 // ===== LED settings =====

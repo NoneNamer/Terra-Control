@@ -27,11 +27,26 @@ async fn main() -> Result<()> {
     let led_settings = storage::load_led_settings(&pool, &config).await?;
     let led_presets = storage::load_led_presets(&pool, &config).await?;
 
+    // Re-strike pause across restarts (see lightControl::restore_restrike)
+    let mut light = LightController::new(&config.light_control, Duration::from_secs(config.sensors.interval_secs));
+    let lamp_states = match storage::load_lamp_states(&pool).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            // Unknown history: treat both lamps as "was on" so the full pause applies
+            eprintln!("Failed to load lamp states ({e:#}), applying the full re-strike pause");
+            ["UV1", "UV2"]
+                .map(|relay| storage::LampStateRow { relay: relay.into(), is_on: true, changed_at: chrono::Utc::now() })
+                .to_vec()
+        }
+    };
+    let restrike_messages = lightControl::restore_restrike(&mut light, &lamp_states, chrono::Utc::now(), Instant::now());
+    // Lamps that were "on" are off now (all outputs were just switched off)
+    for row in lamp_states.iter().filter(|r| r.is_on) {
+        storage::save_lamp_state(&pool, &row.relay, false, chrono::Utc::now()).await?;
+    }
+
     let state = AppState {
-        light: Arc::new(Mutex::new(LightController::new(
-            &config.light_control,
-            Duration::from_secs(config.sensors.interval_secs),
-        ))),
+        light: Arc::new(Mutex::new(light)),
         led: Arc::new(Mutex::new(LedController::new(led_settings, led_presets))),
         readings: Arc::new(RwLock::new(None)),
         started: Instant::now(),
@@ -51,6 +66,9 @@ async fn main() -> Result<()> {
         ),
     )
     .await;
+    for msg in restrike_messages {
+        logs::log(&pool, Level::Info, &msg).await;
+    }
 
     // Apply the schedule once before the tasks start (heat stays off until the first reading)
     if let Err(e) = lightControl::update_lights(&state).await {
@@ -83,7 +101,16 @@ async fn main() -> Result<()> {
     // Wait until the lock is free so no task writes the relays after this point
     let _light = state.light.lock().await;
     let _led = state.led.lock().await;
+    let uv_on: Vec<Relay> = {
+        let hw = hw.lock();
+        [Relay::Uv1, Relay::Uv2].into_iter().filter(|r| hw.relay(*r)).collect()
+    };
     switch_everything_off(&hw);
+    for relay in uv_on {
+        if let Err(e) = storage::save_lamp_state(&pool, relay.name(), false, chrono::Utc::now()).await {
+            eprintln!("Failed to store {} state: {e:#}", relay.name());
+        }
+    }
     logs::log(&pool, Level::Info, "Terrarium controller stopped, all outputs off").await;
     pool.close().await;
     result
