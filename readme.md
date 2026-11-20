@@ -176,9 +176,20 @@ dtparam=i2c_arm=on              # I²C für DS3231 und SHT3x
 dtoverlay=w1-gpio,gpiopin=26    # 1-Wire auf GPIO26
 dtoverlay=i2c-rtc,ds3231        # Echtzeituhr
 dtparam=audio=off               # PWM wird für die LED-Streifen gebraucht
+
+# Ausgänge schon beim Booten aktiv auf Low (die Firmware setzt sie, bevor Linux startet):
+gpio=23,24,25=op,dl             # Relais Q3/Q2/Q1 aus
+gpio=13,18=op,dl                # LED-Daten DI (rpi_ws281x übernimmt die Pins beim Start)
+gpio=17,19=op,dl                # LED-Backup-Daten BI
 ```
 
 SPI muss nicht aktiviert werden (J7 bzw. das W5500 wird in v1 nicht genutzt). Danach neu starten.
+Ohne die `gpio=`-Zeilen sind GPIO13–25 bis zum Programmstart Eingänge mit internem Pull-down, die
+Relais sollten also auch dann aus bleiben. Mit den Zeilen ist der Zustand ab dem Einschalten
+eindeutig. Wird das LED-Netzteil-Relais nachgerüstet, dessen Pin hier ergänzen.
+
+**Inbetriebnahme:** Die Schritte vom ersten Einschalten bis zum Dauerlauf stehen als Testprotokoll
+zum Abhaken in [`docs/inbetriebnahme.md`](docs/inbetriebnahme.md).
 
 ### Prüfen
 
@@ -248,6 +259,8 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 ├── Cargo.toml           # Abhängigkeiten
 ├── Dockerfile           # Cross-Compiling für den Pi (aarch64), Ausgabe nach dist/
 ├── deploy/              # install.sh und terrarium.service (systemd)
+├── docs/
+│   └── inbetriebnahme.md # Testprotokoll für die Inbetriebnahme am Pi
 ├── migrations/          # SQLite-Schema (sqlx-Migrationen, beim Start automatisch angewendet)
 ├── modules/
 │   ├── mod.rs           # Modul-Einstieg
@@ -340,8 +353,10 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 - [ ] Hardware-Hinweise oben klären (DIP-Schalter, I²C-Pull-ups, LED-Pegel)
 - [ ] Platinen bestücken, Netzteil-Box, Verkabelung
 - [ ] Halterungen für die Fühler, Deckel
-- [ ] Relais-Verhalten beim Booten testen
-- [ ] Testlauf am Terrarium
+- [x] Testprotokoll für die Inbetriebnahme ([`docs/inbetriebnahme.md`](docs/inbetriebnahme.md)) und
+      `gpio=`-Zeilen in `config.txt`, die Relais, LED-Daten und BI-Leitungen ab dem Booten auf Low halten
+- [ ] Relais-Verhalten beim Booten testen (Protokoll Abschnitt 3)
+- [ ] Testlauf am Terrarium (Protokoll Abschnitte 4–11)
 - **Ziel:** Betrieb am Terrarium
 
 ### Phase 7 – Später (optional)

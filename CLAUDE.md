@@ -57,7 +57,9 @@ cargo test <test_name>      # single test
   `docker build --output dist .` → `dist/terra-control` (64-bit Pi OS, `aarch64-unknown-linux-gnu`).
   Run it after every change to `#[cfg(target_os = "linux")]` code. `rs_ws281x` needs clang (bindgen).
 - On the Pi the binary must run as root (rpi_ws281x uses `/dev/mem`), with `dtparam=audio=off`.
-  Pi setup steps are in `readme.md` ("Raspberry Pi einrichten").
+  Pi setup steps are in `readme.md` ("Raspberry Pi einrichten"); the commissioning test plan is
+  `docs/inbetriebnahme.md` (German). When behaviour, log messages, config limits or UI labels it
+  refers to change, update that checklist too.
 
 ## Architecture
 
