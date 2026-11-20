@@ -1,72 +1,95 @@
-[main]
-setup_mode = true
+# Terrarium controller configuration.
+# Pins are BCM GPIO numbers and match the fabricated `terrarium_pi` board (see readme.md).
 
-[get_data]
-retry = 3 
-interval = 60
-backup_sensor = true
-storage_days = 30
-ds18b20_bus = 4
-dht22_pin = 18
+[main]
+# Commissioning mode: real hardware, schedule paused, lamps are only switched manually via the
+# web API (POST /api/relays/{uv1|uv2|heat}). Overheat protection stays active.
+setup_mode = false
+
+[hardware]
+# true = simulated relays/LEDs/sensors. Non-Linux builds (Windows PC) always simulate.
+simulate = true
+
+[relays]
+# Board: Q1 = GPIO25, Q2 = GPIO24, Q3 = GPIO23. The mapping to the loads is not confirmed yet.
+uv1 = 25
+uv2 = 24
+heat = 23
+# Optional relay for the 24 V LED power supply (to be retrofitted, pin not known yet).
+# led_psu =
+
+[sensors]
+# Fixed 1-Wire IDs (ls /sys/bus/w1/devices on the Pi). Placeholders until the sensors are wired.
+basking_id = "28-000000000001"    # DS18B20 at the basking spot (used for overheat protection)
+cool_id = "28-000000000002"       # DS18B20 on the cool side
+enclosure_id = "28-000000000003"  # MAX31820 on the board
+sht3x_address = 0x44              # SHT3x air temperature / humidity (I2C)
+interval_secs = 60                # measurement interval
+retries = 3                       # read attempts per sensor
+
+[thresholds]
+# Warning thresholds (log only). Reference values: readme.md, "Richtwerte Bartagame".
+basking_max = 47.0
+cool_min = 18.0
+cool_max = 30.0
+humidity_min = 25.0
+humidity_max = 50.0
+enclosure_max = 55.0
 
 [light_control]
-overheat_temp = 50
-overheat_time = 3000
-
-[gpio]
-led_relay = 17
-uv_relay1 = 22
-uv_relay2 = 23
-heat_relay = 27
-ds18b20_bus = 4
-dht22_pin = 18
-veml6075_uv1 = 0
-veml6075_uv2 = 1
-ic_count = 16
+overheat_temp = 50.0              # basking temperature that switches the heat spot off (°C)
+overheat_cooldown_secs = 3000     # heat stays blocked for this long after an overheat (>= 900)
+restrike_pause_secs = 900         # UV1/UV2 re-strike pause after switching off (phase 3)
 
 [led]
-default_mode = "natural"
-default_brightness = 50
-season_weight = 0.3
+data_pin_strip1 = 18              # J5 DI (GPIO17 = BI)
+data_pin_strip2 = 13              # J6 DI (GPIO19 = BI)
+ic_count_strip1 = 16              # WS2805 ICs per strip, 0 = strip not present
+ic_count_strip2 = 16
+default_mode = "natural"          # "natural" (daily colour curve) or "manual"
+default_brightness = 50           # 0-100 %
+season_weight = 0.3               # 0.0-1.0 weight of the weekly base colour
 
-# Natural light presets - RGB values for time of day
-morning_r = 255
-morning_g = 180
-morning_b = 100
-morning_ww = 200
-morning_cw = 50
+# Natural light presets for the daily colour curve (morning -> noon -> evening)
+[led.morning]
+r = 255
+g = 180
+b = 100
+ww = 200
+cw = 50
 
-noon_r = 255
-noon_g = 240
-noon_b = 220
-noon_ww = 50
-noon_cw = 255
+[led.noon]
+r = 255
+g = 240
+b = 220
+ww = 50
+cw = 255
 
-evening_r = 255
-evening_g = 140
-evening_b = 50
-evening_ww = 255
-evening_cw = 0
-
-[display]
-# Future display settings
+[led.evening]
+r = 255
+g = 140
+b = 50
+ww = 255
+cw = 0
 
 [web]
 address = "0.0.0.0"
 port = 80
+static_dir = "static"
 
-[cam]
-# Camera settings
+[storage]
+database = "sqlite:data.db"
+storage_days = 30                 # data cleanup (phase 5)
 
-[db]
-def_uv1_start = "06:30"
-def_uv1_end = "19:00"
-def_uv2_start = "07:00"
-def_uv2_end = "19:30"
-def_heat_start = "10:00"
-def_heat_end = "14:30"
-def_led_R = 150
-def_led_G = 150
-def_led_B = 128
-def_led_WW = 128
-def_led_CW = 128
+# Used for every calendar week without its own schedule row.
+# Leave a time pair out to keep that load off all day.
+[schedule_default]
+uv1_on = "06:30"
+uv1_off = "19:00"
+uv2_on = "07:00"
+uv2_off = "19:30"
+heat_on = "10:00"
+heat_off = "14:30"
+led_on = "06:00"
+led_off = "20:00"
+led_color = { r = 150, g = 150, b = 128, ww = 128, cw = 128 }

@@ -5,7 +5,8 @@ Der Controller schaltet UV-Lampen und Wärmespot nach Wochenplan, steuert die LE
 Winterbeleuchtung mit tageszeitabhängigem Farbverlauf, misst Temperatur und Luftfeuchtigkeit
 und stellt alles über eine lokale Weboberfläche bereit.
 
-> **Stand (2026-11-20):** Die Software kompiliert noch nicht. Die Platinen sind gefertigt.
+> **Stand (2026-11-20):** Phase 1 ist abgeschlossen: Die Software kompiliert und läuft am PC mit
+> simulierter Hardware. Sensor- und LED-Treiber für den Pi fehlen noch (Phase 2). Die Platinen sind gefertigt.
 > Den aktuellen Arbeitsstand zeigt die [Roadmap](#roadmap).
 
 ---
@@ -38,10 +39,13 @@ und ist nur noch in der Git-Historie; für Phase 7 wird die Kamera neu umgesetzt
 
 | Thema | Entscheidung |
 |---|---|
-| Datenbank | **SQLite über `sqlx`**, ausschließlich (kein PostgreSQL, kein `rusqlite`) |
+| Datenbank | **SQLite über `sqlx`**, ausschließlich (kein PostgreSQL, kein `rusqlite`). Laufzeit-Abfragen statt `query!`-Makros, Schema als Migrationen in `migrations/` |
 | Zeitplan | **Ein Eintrag pro Kalenderwoche**. Berechnet wird nur der Farbverlauf der LEDs innerhalb eines Tages |
 | LEDs | Teil der Zeitplan-Logik (Grund- und Winterbeleuchtung), nicht nur manuell |
-| GPIO | **Alle GPIO-Zugriffe in `gpio.rs`**. Andere Module enthalten nur Logik und rufen `gpio.rs` auf |
+| GPIO | **Alle GPIO-Zugriffe in `gpio.rs`** hinter dem Trait `Hardware` (Simulation + Pi). Andere Module enthalten nur Logik |
+| Inbetriebnahme | `setup_mode = true`: echte Hardware, Zeitplan pausiert, Lampen nur manuell per Web-API schaltbar. Überhitzungsschutz bleibt aktiv |
+| Simulation | `[hardware] simulate = true` bzw. immer unter Windows |
+| LED-Streifen | Beide Streifen zeigen immer dieselbe Farbe, IC-Anzahl je Streifen konfigurierbar |
 | Fühler | **Feste Zuordnung** der 1-Wire-IDs in `config.toml` |
 | Luftfeuchtigkeit | **SHT3x** statt DHT22 |
 | UV-Messung | Entfällt (Kosten) |
@@ -95,17 +99,10 @@ Die Relais-Leitungen laufen von J2 auf der Pi-Platine zu J1 auf der PSU-Platine:
 Welcher Kanal welche Last schaltet, ist noch offen und wird deshalb in `config.toml` konfigurierbar
 gehalten (Vorgabe: Q1 = UV1, Q2 = UV2, Q3 = Heat).
 
-> ⚠️ **Die Pins in `config.toml` passen nicht zur Platine** und werden in Phase 1 angepasst:
->
-> | Eintrag | config.toml | Platine |
-> |---|---|---|
-> | `uv_relay1` | 22 | 25 (Q1) – Zuordnung bestätigen |
-> | `uv_relay2` | 23 | 24 (Q2) – Zuordnung bestätigen |
-> | `heat_relay` | 27 | 23 (Q3) – Zuordnung bestätigen |
-> | `led_relay` | 17 | **kein Relais auf der Platine** (nur 3 Kanäle), wird später nachgerüstet → optional, Pin offen. GPIO17 ist LED-Streifen 1 (BI) |
-> | `ds18b20_bus` | 4 | **26** (`dtoverlay=w1-gpio,gpiopin=26`) |
-> | `dht22_pin` | 18 | entfällt (SHT3x über I²C). GPIO18 ist LED-Streifen 1 |
-> | LED-Daten | SPI0 MOSI (GPIO10) im Code | GPIO18/13 (PWM). SPI0 ist an J7 belegt |
+Die Pins in `config.toml` entsprechen seit Phase 1 der Platine: `[relays]` uv1/uv2/heat = 25/24/23,
+optionales `led_psu` (auskommentiert), LED-Daten `data_pin_strip1/2` = 18/13. 1-Wire läuft über das
+Kernel-Overlay `dtoverlay=w1-gpio,gpiopin=26`, die Fühler werden über ihre festen IDs in `[sensors]`
+angesprochen (bis zur Verkabelung Platzhalter).
 
 ### Hardware-Hinweise aus der Prüfung
 
@@ -143,14 +140,16 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 ## Projektstruktur
 
 ```
-├── main.rs              # Einstiegspunkt, startet Tasks
+├── main.rs              # Einstiegspunkt, startet Tasks, schaltet beim Beenden alles aus
 ├── config.toml          # Konfiguration
 ├── Cargo.toml           # Abhängigkeiten
+├── migrations/          # SQLite-Schema (sqlx-Migrationen, beim Start automatisch angewendet)
 ├── modules/
 │   ├── mod.rs           # Modul-Einstieg
-│   ├── models.rs        # Datenmodelle
+│   ├── models.rs        # Datenmodelle (Farbe, Zeitfenster, Wochenplan, Messwerte)
+│   ├── state.rs         # Gemeinsamer Zustand für Tasks und Web-Handler
 │   ├── config.rs        # Laden und Prüfen von config.toml
-│   ├── gpio.rs          # SÄMTLICHER Hardware-Zugriff (Relais, LED-Streifen, Sensoren)
+│   ├── gpio.rs          # SÄMTLICHER Hardware-Zugriff: Trait `Hardware`, Simulation, Pi-Backend
 │   ├── getData.rs       # Messwerterfassung (nutzt gpio.rs)
 │   ├── storage.rs       # SQLite (sqlx), Schema
 │   ├── lightControl.rs  # Logik UV / Wärmespot / Zündpause / Überhitzung
@@ -182,18 +181,20 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 - [x] `Cargo.lock` wird versioniert (Binärprojekt), `data.db` und `temp/` ignoriert
 
 ### Phase 1 – Kompilierbar machen
-- [ ] `config.rs`/`config.toml` vereinheitlichen, Pins laut Tabelle oben korrigieren
-- [ ] Fühler-IDs (1-Wire) fest in `config.toml`
-- [ ] Ein SQLite-Schema mit `sqlx`-Migrationen (Wochenplan inkl. LED-Zeiten und -Farbe, Messwerte, Logs, LED-Einstellungen)
-- [ ] `gpio.rs` als einzige Hardware-Schicht: Relais, LED-Streifen, 1-Wire, I²C
-- [ ] Hardware hinter einem Trait mit **Simulation**, damit das Programm auch unter Windows läuft
-- [ ] Relais-Zuordnung Q1–Q3 → UV1/UV2/Heat konfigurierbar, optionales LED-Netzteil-Relais
-- [ ] `static/` über den Webserver ausliefern (bisher nur über den gestrichenen Kamera-Server)
-- [ ] Module verdrahten, fehlende Typen ergänzen
+- [x] `config.rs`/`config.toml` vereinheitlichen, Pins laut Platine korrigieren (unbekannte Schlüssel sind ein Fehler)
+- [x] Fühler-IDs (1-Wire) fest in `config.toml` (noch Platzhalter)
+- [x] Ein SQLite-Schema mit `sqlx`-Migrationen (Wochenplan inkl. LED-Zeiten und -Farbe, Messwerte, Logs, LED-Einstellungen, LED-Presets)
+- [x] `gpio.rs` als einzige Hardware-Schicht: Relais, LED-Streifen, 1-Wire, I²C
+- [x] Hardware hinter einem Trait mit **Simulation** (einfaches Wärmemodell), läuft unter Windows
+- [x] Relais-Zuordnung Q1–Q3 → UV1/UV2/Heat konfigurierbar, optionales LED-Netzteil-Relais
+- [x] `static/` über den Webserver ausliefern
+- [x] Module verdrahten, fehlende Typen ergänzen; Inbetriebnahme-Modus (`setup_mode`) mit `POST /api/relays/{uv1|uv2|heat}`
+- [x] Dashboard (`index.html`) an die neuen Messwerte angepasst
+- [ ] Pi-Backend (`#[cfg(target_os = "linux")]`) ist noch nicht kompiliert worden → spätestens mit dem Docker-Build (Phase 5)
 - **Ziel:** `cargo build` läuft, die Weboberfläche startet am PC mit simulierten Werten
 
 ### Phase 2 – Sensoren & LED-Treiber
-- [ ] DS18B20 / MAX31820 über 1-Wire (sysfs, `w1-gpio` auf GPIO26)
+- [ ] DS18B20 / MAX31820 über 1-Wire (sysfs, `w1-gpio` auf GPIO26) – Lesecode steht, am Pi testen
 - [ ] SHT3x über I²C
 - [ ] DS3231 als Systemzeit (`dtoverlay=i2c-rtc,ds3231`)
 - [ ] WS2805-Treiber für GPIO18/13 (PWM) klären und umsetzen
@@ -202,12 +203,12 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 ### Phase 3 – Sicherheit & Logik
 - [ ] Zündpause UV1/UV2 (≥ 15 min nach dem Ausschalten, auch nach einem Neustart)
 - [ ] Überhitzungsschutz Wärmespot testen
-- [ ] Sicherer Zustand bei Sensorausfall (Wärmespot aus)
+- [ ] Sicherer Zustand bei Sensorausfall (Wärmespot aus) – umgesetzt (kein/zu alter Messwert sperrt den Spot), Tests fehlen
 - [ ] Unit-Tests für Zeitplan, Zündpause und LED-Verlauf
 - **Ziel:** Der Wärmespot schaltet nachweisbar sicher
 
 ### Phase 4 – Weboberfläche
-- [ ] API-Routen und Frontend abgleichen (`api.js` ↔ `web.rs`)
+- [ ] API-Routen und Frontend abgleichen (`api.js`, `schedule.html`, `data.html` ↔ `web.rs`; Dashboard und LED-Seite laufen bereits)
 - [ ] Wochenplan-Seite (KW 1–53) fertigstellen, inkl. LED-Zeiten und -Farbe
 - [ ] Eingaben serverseitig prüfen
 - **Ziel:** komplett im Browser bedienbar

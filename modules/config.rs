@@ -1,336 +1,247 @@
-// modules/config.rs
-use std::fs;
-use std::error::Error;
-use toml;
-use chrono::NaiveTime;
+//! Loading and validation of `config.toml`.
 
-//top level config struct
-#[derive(Debug, Deserialize)]
+use crate::modules::models::{LedMode, LedPresets, Rgbww, TimeWindow, WeekSchedule};
+use anyhow::{bail, Context, Result};
+use serde::Deserialize;
+
+/// Default location of the configuration file (relative to the working directory).
+pub const CONFIG_PATH: &str = "config.toml";
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub main: MainConfig,
-    pub gpio: GpioConfig,
-    pub db: ScheduleConfig,
-    pub web: WebConfig, 
+    pub hardware: HardwareConfig,
+    pub relays: RelayConfig,
+    pub sensors: SensorConfig,
+    pub thresholds: Thresholds,
     pub light_control: LightControlConfig,
-    pub get_data: GetDataConfig,
     pub led: LedConfig,
+    pub web: WebConfig,
+    pub storage: StorageConfig,
+    pub schedule_default: ScheduleDefault,
 }
 
-//main config struct
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MainConfig {
-    pub debug: bool,
+    /// Commissioning mode: schedule paused, lamps only switched manually
+    pub setup_mode: bool,
 }
 
-//GPIO struct
-#[derive(Debug, Deserialize)]
-pub struct GpioConfig {
-    pub uv_relay1: u8,
-    pub uv_relay2: u8,
-    pub heat_relay: u8,
-    pub led_relay: u8,
-    pub ic_count: Option<usize>,
-    pub ds18b20_bus: Option<u8>,
-    pub dht22_pin: Option<u8>,
-    pub veml6075_uv1: u8,
-    pub veml6075_uv2: u8,
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HardwareConfig {
+    /// Use the simulation backend (forced on non-Linux targets)
+    pub simulate: bool,
 }
 
-//lightControl struct
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelayConfig {
+    pub uv1: u8,
+    pub uv2: u8,
+    pub heat: u8,
+    /// Optional LED power supply relay (to be retrofitted)
+    pub led_psu: Option<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SensorConfig {
+    pub basking_id: String,
+    pub cool_id: String,
+    pub enclosure_id: String,
+    #[allow(dead_code)] // used by the SHT3x driver (phase 2)
+    pub sht3x_address: u16,
+    pub interval_secs: u64,
+    pub retries: u8,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Thresholds {
+    pub basking_max: f32,
+    pub cool_min: f32,
+    pub cool_max: f32,
+    pub humidity_min: f32,
+    pub humidity_max: f32,
+    pub enclosure_max: f32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LightControlConfig {
-    pub overheat_temp: u8,
-    pub overheat_time: u64, // Time in seconds
+    pub overheat_temp: f32,
+    pub overheat_cooldown_secs: u64,
+    pub restrike_pause_secs: u64,
 }
 
-// New GetDataConfig struct
 #[derive(Debug, Clone, Deserialize)]
-pub struct GetDataConfig {
-    pub retry: u8,              // Number of retries for failed sensor readings
-    pub interval: Option<u64>,  // Interval in seconds for data collection (default: 60)
-    pub backup_sensor: bool,    // Whether to use DHT22 as backup for overheat detection
-    pub storage_days: Option<u32>, // How many days of data to keep (for automatic cleanup)
-}
-
-// web config struct
-#[derive(Debug, Deserialize)]
-pub struct WebConfig {
-    pub address: String,    // Web server address (e.g., "127.0.0.1")
-    pub port: u16,          // Web server port (e.g., 8080)
-}
-
-//schedule struct
-#[derive(Debug, Deserialize)]
-pub struct ScheduleConfig {
-    pub def_uv1_start: String,
-    pub def_uv1_end: String,
-    pub def_uv2_start: String,
-    pub def_uv2_end: String,
-    pub def_heat_start: String,
-    pub def_heat_end: String,
-    pub def_led_R: i32,
-    pub def_led_G: i32,
-    pub def_led_B: i32,
-    pub def_led_WW: i32,
-    pub def_led_CW: i32,
-}
-
-// LED configuration
-#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LedConfig {
-    pub default_mode: String,                     // Either "manual" or "natural"
-    pub default_brightness: u8,                   // 0-100% brightness
-    pub season_weight: f32,                       // 0.0 - 1.0 weight of season color
-
-    // Natural light presets
-    pub morning_r: u8,
-    pub morning_g: u8,
-    pub morning_b: u8,
-    pub morning_ww: u8,
-    pub morning_cw: u8,
-
-    pub noon_r: u8,
-    pub noon_g: u8,
-    pub noon_b: u8,
-    pub noon_ww: u8,
-    pub noon_cw: u8,
-
-    pub evening_r: u8,
-    pub evening_g: u8,
-    pub evening_b: u8,
-    pub evening_ww: u8,
-    pub evening_cw: u8,
-}
-
-//validation logic
-impl Config {
-    pub fn validate(&self) -> Result<(), String> {
-        self.main.validate()?;
-        self.get_data.validate()?;
-        self.db.validate()?;
-        self.web.validate()?;
-        self.light_control.validate()?;
-        self.led.validate()?;
-        Ok(())
-    }
-}
-
-impl MainConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        // No specific validation needed since debug is a boolean
-        Ok(())
-    }
-}
-
-impl GpioConfig {
-    pub fn load() -> Self {
-        let config_str = std::fs::read_to_string("config.toml")
-            .expect("Failed to read config.toml");
-        
-        let config: toml::Value = toml::from_str(&config_str)
-            .expect("Failed to parse config.toml");
-        
-        let gpio = config.get("gpio")
-            .expect("Missing [gpio] section in config.toml");
-        
-        Self {
-            uv_relay1: gpio.get("uv_relay1")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8)
-                .expect("Missing or invalid uv_relay1 in config"),
-                
-            uv_relay2: gpio.get("uv_relay2")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8)
-                .expect("Missing or invalid uv_relay2 in config"),
-                
-            heat_relay: gpio.get("heat_relay")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8)
-                .expect("Missing or invalid heat_relay in config"),
-                
-            led_relay: gpio.get("led_relay")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8)
-                .expect("Missing or invalid led_relay in config"),
-                
-            ic_count: gpio.get("ic_count")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as usize),
-                
-            ds18b20_bus: gpio.get("ds18b20_bus")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8),
-                
-            dht22_pin: gpio.get("dht22_pin")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8),
-            
-            veml6075_uv1: gpio.get("veml6075_uv1")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8)
-                .expect("Missing or invalid veml6075_uv1 in config"),
-            
-            veml6075_uv2: gpio.get("veml6075_uv2")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u8)
-                .expect("Missing or invalid veml6075_uv2 in config"),
-        }
-    }
-    
-    pub fn validate(&self) -> Result<(), String> {
-        // Validate GPIO pin numbers
-        if self.uv_relay1 > 27 {
-            return Err(format!("Invalid UV1 relay GPIO pin: {}", self.uv_relay1));
-        }
-        
-        if self.uv_relay2 > 27 {
-            return Err(format!("Invalid UV2 relay GPIO pin: {}", self.uv_relay2));
-        }
-        
-        if self.heat_relay > 27 {
-            return Err(format!("Invalid heat relay GPIO pin: {}", self.heat_relay));
-        }
-        
-        if self.led_relay > 27 {
-            return Err(format!("Invalid LED relay GPIO pin: {}", self.led_relay));
-        }
-        
-        // Check for pin conflicts
-        let pins = vec![self.uv_relay1, self.uv_relay2, self.heat_relay, self.led_relay];
-        for i in 0..pins.len() {
-            for j in i+1..pins.len() {
-                if pins[i] == pins[j] {
-                    return Err(format!("GPIO pin conflict: Pin {} used multiple times", pins[i]));
-                }
-            }
-        }
-        
-        Ok(())
-    }
-}
-
-impl LightControlConfig {
-    pub fn validate(&self) -> Result<(), String> {
-
-            // Validate overheat_temp (0-60 °C)
-            if !(0..=60).contains(&self.overheat_temp) {
-                return Err(format!(
-                    "Invalid overheat_temp: {}. Must be in the range 0-60°C.",
-                    self.overheat_temp
-                ));
-            }
-
-            // Validate overheat_time (minimum 15 minutes = 900 seconds)
-            if self.overheat_time < 900 {
-                return Err(format!(
-                    "Invalid overheat_time: {} seconds. Must be at least 900 seconds (15 minutes).",
-                    self.overheat_time
-                ));
-            }
-
-            Ok(())
-    }
-}
-
-impl ScheduleConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        // Check time formats for mandatory fields
-        for (field_name, value) in &[
-            ("def_uv1_start", &self.def_uv1_start),
-            ("def_uv1_end", &self.def_uv1_end),
-            ("def_uv2_start", &self.def_uv2_start),
-            ("def_uv2_end", &self.def_uv2_end),
-            ("def_heat_start", &self.def_heat_start),
-            ("def_heat_end", &self.def_heat_end),
-        ] {
-            if Self::validate_time_format(value).is_err() {
-                return Err(format!("Missing / invalid value in db: {}", field_name));
-            }
-        }
-
-        // Check LED intensity ranges
-        for (field_name, &value) in &[
-            ("def_led_R", self.def_led_R),
-            ("def_led_G", self.def_led_G),
-            ("def_led_B", self.def_led_B),
-            ("def_led_WW", self.def_led_WW),
-            ("def_led_CW", self.def_led_CW),
-        ] {
-            if value < 0 || value > 255 {
-                return Err(format!("Missing / invalid value in db: {}", field_name));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn validate_time_format(time: &str) -> Result<(), ConfigError> {
-    chrono::NaiveTime::parse_from_str(time, "%H:%M").map_err(|_| 
-        ConfigError::ValidationError("Invalid time format".to_string()))?;
-    Ok(())
-    }
-}
-
-impl WebConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        // Ensure that the address is non-empty
-        if self.address.is_empty() {
-            return Err("Web server address cannot be empty".to_string());
-        }
-
-        // Ensure the port is within valid range
-        if self.port == 0 || self.port > 65535 {
-            return Err("Invalid port number".to_string());
-        }
-
-        Ok(())
-    }
-}
-
-impl GetDataConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.retry == 0 {
-            return Err("Retry count must be at least 1".into());
-        }
-        
-        if let Some(interval) = self.interval {
-            if interval < 10 {
-                return Err(format!("Interval must be at least 10 seconds (got {})", interval));
-            }
-        }
-        
-        if let Some(days) = self.storage_days {
-            if days < 1 {
-                return Err(format!("Storage days must be at least 1 (got {})", days));
-            }
-        }
-        
-        Ok(())
-    }
+    pub data_pin_strip1: u8,
+    pub data_pin_strip2: u8,
+    #[allow(dead_code)] // used by the WS2805 driver (phase 2)
+    pub ic_count_strip1: usize,
+    #[allow(dead_code)]
+    pub ic_count_strip2: usize,
+    pub default_mode: LedMode,
+    pub default_brightness: u8,
+    pub season_weight: f32,
+    pub morning: Rgbww,
+    pub noon: Rgbww,
+    pub evening: Rgbww,
 }
 
 impl LedConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        // Validate weight is between 0 and 1
-        if self.season_weight < 0.0 || self.season_weight > 1.0 {
-            return Err(format!("Season weight must be between 0.0 and 1.0, got: {}", self.season_weight));
-        }
-        
-        Ok(())
+    pub fn presets(&self) -> LedPresets {
+        LedPresets { morning: self.morning, noon: self.noon, evening: self.evening }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebConfig {
+    pub address: String,
+    pub port: u16,
+    pub static_dir: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageConfig {
+    pub database: String,
+    pub storage_days: u32,
+}
+
+/// Schedule used for weeks without their own database row.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleDefault {
+    pub uv1_on: Option<String>,
+    pub uv1_off: Option<String>,
+    pub uv2_on: Option<String>,
+    pub uv2_off: Option<String>,
+    pub heat_on: Option<String>,
+    pub heat_off: Option<String>,
+    pub led_on: Option<String>,
+    pub led_off: Option<String>,
+    pub led_color: Rgbww,
+}
+
+impl ScheduleDefault {
+    pub fn to_week_schedule(&self) -> Result<WeekSchedule, String> {
+        let w = |name, on: &Option<String>, off: &Option<String>| {
+            TimeWindow::parse_pair(name, on.as_deref(), off.as_deref())
+        };
+        Ok(WeekSchedule {
+            uv1: w("uv1", &self.uv1_on, &self.uv1_off)?,
+            uv2: w("uv2", &self.uv2_on, &self.uv2_off)?,
+            heat: w("heat", &self.heat_on, &self.heat_off)?,
+            led: w("led", &self.led_on, &self.led_off)?,
+            led_color: self.led_color,
+        })
     }
 }
 
 impl Config {
-    pub fn load(config_path: &str) -> Result<Self, String> {
-        // Read and parse the config file
-        let config_str = std::fs::read_to_string(config_path)
-            .map_err(|_| "Failed to read configuration file".to_string())?;
-        let config: Config = toml::de::from_str(&config_str)
-            .map_err(|_| "Failed to parse configuration file".to_string())?;
-
-        // Validate the loaded configuration
-        config.validate()?;
+    /// Reads, parses and validates the configuration file.
+    pub fn load(path: &str) -> Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read configuration file '{path}'"))?;
+        let config: Config = toml::from_str(&text)
+            .with_context(|| format!("failed to parse configuration file '{path}'"))?;
+        config.validate().with_context(|| format!("invalid configuration in '{path}'"))?;
         Ok(config)
+    }
+
+    /// The validated default schedule (validity is checked in `validate`).
+    pub fn default_schedule(&self) -> WeekSchedule {
+        self.schedule_default
+            .to_week_schedule()
+            .expect("schedule_default is validated on load")
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        // GPIO pins: valid BCM numbers, no pin used twice
+        let mut pins = vec![
+            ("relays.uv1", self.relays.uv1),
+            ("relays.uv2", self.relays.uv2),
+            ("relays.heat", self.relays.heat),
+            ("led.data_pin_strip1", self.led.data_pin_strip1),
+            ("led.data_pin_strip2", self.led.data_pin_strip2),
+        ];
+        if let Some(pin) = self.relays.led_psu {
+            pins.push(("relays.led_psu", pin));
+        }
+        for (i, (name, pin)) in pins.iter().enumerate() {
+            if *pin > 27 {
+                bail!("{name}: GPIO {pin} does not exist (0-27)");
+            }
+            if let Some((other, _)) = pins[..i].iter().find(|(_, p)| p == pin) {
+                bail!("GPIO {pin} is used by both {other} and {name}");
+            }
+        }
+
+        let s = &self.sensors;
+        let ids = [("basking_id", &s.basking_id), ("cool_id", &s.cool_id), ("enclosure_id", &s.enclosure_id)];
+        for (i, (name, id)) in ids.iter().enumerate() {
+            if id.trim().is_empty() {
+                bail!("sensors.{name} must not be empty");
+            }
+            if ids[..i].iter().any(|(_, other)| other == id) {
+                bail!("sensors.{name}: 1-Wire ID '{id}' is assigned twice");
+            }
+        }
+        if s.interval_secs < 10 {
+            bail!("sensors.interval_secs must be at least 10 (got {})", s.interval_secs);
+        }
+        if s.retries == 0 {
+            bail!("sensors.retries must be at least 1");
+        }
+
+        let lc = &self.light_control;
+        if !(30.0..=60.0).contains(&lc.overheat_temp) {
+            bail!("light_control.overheat_temp must be 30-60 °C (got {})", lc.overheat_temp);
+        }
+        if lc.overheat_cooldown_secs < 900 {
+            bail!("light_control.overheat_cooldown_secs must be at least 900 (got {})", lc.overheat_cooldown_secs);
+        }
+        if lc.restrike_pause_secs < 900 {
+            bail!("light_control.restrike_pause_secs must be at least 900 (got {})", lc.restrike_pause_secs);
+        }
+
+        if self.led.default_brightness > 100 {
+            bail!("led.default_brightness must be 0-100 (got {})", self.led.default_brightness);
+        }
+        if !(0.0..=1.0).contains(&self.led.season_weight) {
+            bail!("led.season_weight must be 0.0-1.0 (got {})", self.led.season_weight);
+        }
+
+        if self.web.address.trim().is_empty() {
+            bail!("web.address must not be empty");
+        }
+        if self.web.port == 0 {
+            bail!("web.port must not be 0");
+        }
+        if self.storage.storage_days == 0 {
+            bail!("storage.storage_days must be at least 1");
+        }
+
+        if let Err(e) = self.schedule_default.to_week_schedule() {
+            bail!("schedule_default: {e}");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_config_is_valid() {
+        Config::load(CONFIG_PATH).expect("config.toml must load");
     }
 }

@@ -1,172 +1,127 @@
 mod modules;
 
-use modules::config::Config;
-use modules::web;
-use modules::gpio::RelayController;
-use modules::lightControl;
-use modules::ledStrip::{LEDController, update_leds};
-use modules::storage;
-use modules::getData::{self, CurrentReadings};
-use modules::logs;
-use std::error::Error;
-use std::net::SocketAddr;
+use anyhow::{Context, Result};
+use modules::config::{Config, CONFIG_PATH};
+use modules::gpio::Relay;
+use modules::ledStrip::LedController;
+use modules::lightControl::LightController;
+use modules::logs::{self, Level};
+use modules::models::Rgbww;
+use modules::state::AppState;
+use modules::{getData, gpio, ledStrip, lightControl, storage, web};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::task;
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, RwLock};
 
-/// Main entry point
-///
-/// This function initializes all the necessary components:
-/// - Loads the configuration from config.toml
-/// - Initializes the database connection
-/// - Sets up the relay controller for device control
-/// - Initializes the light and LED controllers
-/// - Starts background tasks for:
-///   - Sensor data collection
-///   - Light control based on schedule
-///   - LED control based on schedule
-///   - Web server for the control interface
-///
-/// # Errors
-///
-/// Returns an error if any of the initialization steps fail or if any of the
-/// background tasks encounter an unrecoverable error.
+/// Entry point: loads the config, opens the database, creates the hardware backend and runs
+/// the background tasks (measurement, lamps, LEDs) plus the web server until Ctrl+C / SIGTERM.
+/// On shutdown all lamps and LEDs are switched off.
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    // Load the configuration from the config.toml file
-    let config = Arc::new(Config::load()?);
-    println!("Configuration loaded successfully: {:?}", config);
+async fn main() -> Result<()> {
+    let config = Arc::new(Config::load(CONFIG_PATH)?);
+    let pool = storage::connect(&config.storage.database).await?;
 
-    // Initialize database connection
-    let db_pool = Arc::new(storage::initialize_db().await?);
-    
-    // Log system startup
-    logs::log(&db_pool, "INFO", "Terrarium Controller system starting up").await?;
-    
-    // Initialize the relay controller
-    let relay_controller = Arc::new(Mutex::new(
-        RelayController::new().expect("Failed to initialize relay controller")
-    ));
-    
-    // Create a light controller
-    let light_controller = Arc::new(Mutex::new(
-        lightControl::LightController::new(config.light_control.clone())
-            .expect("Failed to initialize light controller")
-    ));
-    
-    // Create an LED controller that uses the relay controller
-    let led_controller = Arc::new(Mutex::new(
-        LEDController::new(Arc::clone(&relay_controller))
-    ));
-    
-    // Initialize the LED controller
-    {
-        let mut led_ctrl = led_controller.lock().await;
-        if let Err(e) = led_ctrl.initialize().await {
-            eprintln!("Warning: Failed to initialize LED controller: {:?}", e);
-            logs::log(&db_pool, "WARNING", &format!("Failed to initialize LED controller: {:?}", e)).await?;
+    let hw = gpio::create(&config)?;
+    switch_everything_off(&hw);
+
+    let led_settings = storage::load_led_settings(&pool, &config).await?;
+    let led_presets = storage::load_led_presets(&pool, &config).await?;
+
+    let state = AppState {
+        light: Arc::new(Mutex::new(LightController::new(
+            &config.light_control,
+            Duration::from_secs(config.sensors.interval_secs),
+        ))),
+        led: Arc::new(Mutex::new(LedController::new(led_settings, led_presets))),
+        readings: Arc::new(RwLock::new(None)),
+        started: Instant::now(),
+        hw: hw.clone(),
+        pool: pool.clone(),
+        config: config.clone(),
+    };
+
+    let backend = hw.lock().backend();
+    logs::log(
+        &pool,
+        Level::Info,
+        &format!(
+            "Terrarium controller {} starting (hardware: {backend}, setup mode: {})",
+            env!("CARGO_PKG_VERSION"),
+            config.main.setup_mode
+        ),
+    )
+    .await;
+
+    // Apply the schedule once before the tasks start (heat stays off until the first reading)
+    if let Err(e) = lightControl::update_lights(&state).await {
+        logs::log(&pool, Level::Error, &format!("Initial light update failed: {e:#}")).await;
+    }
+    if let Err(e) = ledStrip::update_leds(&state).await {
+        logs::log(&pool, Level::Error, &format!("Initial LED update failed: {e:#}")).await;
+    }
+
+    let tasks = [
+        tokio::spawn(getData::run(state.clone())),
+        tokio::spawn(lightControl::run(state.clone())),
+        tokio::spawn(ledStrip::run(state.clone())),
+    ];
+
+    let addr = format!("{}:{}", config.web.address, config.web.port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .with_context(|| format!("failed to bind web server to {addr}"))?;
+    logs::log(&pool, Level::Info, &format!("Web interface on http://{addr}")).await;
+
+    let result = axum::serve(listener, web::router(state.clone()))
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("web server failed");
+
+    for task in tasks {
+        task.abort();
+    }
+    // Wait until the lock is free so no task writes the relays after this point
+    let _light = state.light.lock().await;
+    let _led = state.led.lock().await;
+    switch_everything_off(&hw);
+    logs::log(&pool, Level::Info, "Terrarium controller stopped, all outputs off").await;
+    pool.close().await;
+    result
+}
+
+fn switch_everything_off(hw: &gpio::SharedHardware) {
+    let mut hw = hw.lock();
+    for relay in [Relay::Uv1, Relay::Uv2, Relay::Heat] {
+        if let Err(e) = hw.set_relay(relay, false) {
+            eprintln!("Failed to switch {} off: {e:#}", relay.name());
         }
     }
-    
-    // Create a shared state for current sensor readings
-    let current_readings = Arc::new(Mutex::new(CurrentReadings::new()));
+    if let Err(e) = hw.write_leds(Rgbww::OFF) {
+        eprintln!("Failed to switch LEDs off: {e:#}");
+    }
+    if let Err(e) = hw.set_relay(Relay::LedPsu, false) {
+        eprintln!("Failed to switch LED PSU off: {e:#}");
+    }
+}
 
-    // Initialize and start the sensor data collection task
-    getData::start_data_collection(
-        Arc::clone(&db_pool),
-        Arc::clone(&current_readings),
-        Arc::clone(&config),
-        Arc::clone(&light_controller)
-    ).await;
-
-    // Initialize the light control task
-    let light_control_handle = task::spawn({
-        let config = Arc::clone(&config);
-        let light_controller = Arc::clone(&light_controller);
-        let db_pool = Arc::clone(&db_pool);
-        
-        async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-            loop {
-                interval.tick().await;
-                
-                // Update light control based on schedule
-                if let Err(e) = lightControl::update_lights(&db_pool, &light_controller, &config).await {
-                    eprintln!("Error updating lights: {:?}", e);
-                    if let Err(log_err) = logs::log(&db_pool, "ERROR", &format!("Error updating lights: {:?}", e)).await {
-                        eprintln!("Failed to log error: {:?}", log_err);
-                    }
-                }
+/// Resolves on Ctrl+C, and on Unix also on SIGTERM (sent by systemd).
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
             }
+            Err(_) => std::future::pending::<()>().await,
         }
-    });
-    
-    // Initialize the LED control task
-    let led_control_handle = task::spawn({
-        let config = Arc::clone(&config);
-        let led_controller = Arc::clone(&led_controller);
-        let db_pool = Arc::clone(&db_pool);
-        
-        async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-            loop {
-                interval.tick().await;
-                // Update LED control based on schedule or settings
-                if let Err(e) = update_leds(&db_pool, &led_controller, &config).await {
-                    eprintln!("Error updating LEDs: {:?}", e);
-                    if let Err(log_err) = logs::log(&db_pool, "ERROR", &format!("Error updating LEDs: {:?}", e)).await {
-                        eprintln!("Failed to log error: {:?}", log_err);
-                    }
-                }
-            }
-        }
-    });
-
-    // Log web server startup
-    logs::log(&db_pool, "INFO", "Starting web server").await?;
-
-    // Initialize the web server
-    let web_handle = task::spawn({
-        let db_pool = Arc::clone(&db_pool);
-        let light_controller = Arc::clone(&light_controller);
-        let relay_controller = Arc::clone(&relay_controller);
-        let led_controller = Arc::clone(&led_controller);
-        let current_readings = Arc::clone(&current_readings);
-        let config = Arc::clone(&config);
-
-        async move {
-            let router = web::create_router(
-                &db_pool,
-                light_controller,
-                relay_controller,
-                led_controller,
-                current_readings,
-                Arc::clone(&config),
-            ).await;
-            
-            let addr: SocketAddr = format!("{}:{}", config.web.address, config.web.port)
-                .parse()
-                .expect("Invalid address");
-                
-            println!("Starting web server at {}", addr);
-            // axum 0.7+ removed axum::Server; bind a tokio listener and use axum::serve
-            let listener = tokio::net::TcpListener::bind(addr)
-                .await
-                .expect("Failed to bind web server address");
-            axum::serve(listener, router)
-                .await
-                .expect("Failed to start server");
-        }
-    });
-
-    // Wait for all tasks to finish (they shouldn't unless there's an error)
-    tokio::try_join!(light_control_handle, led_control_handle, web_handle)?;
-
-    // Log system shutdown
-    logs::log(&db_pool, "INFO", "Terrarium Controller shutting down").await?;
-
-    // Perform safe shutdown
-    getData::shutdown_safely(&db_pool).await;
-
-    Ok(())
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }

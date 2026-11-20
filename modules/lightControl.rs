@@ -1,276 +1,188 @@
+//! Logic for UV1, UV2 and the heat spot: schedule evaluation and overheat protection.
+//! No hardware access here; relays are switched through `gpio::Hardware`.
+
 use crate::modules::config::LightControlConfig;
-
-use std::thread;
+use crate::modules::gpio::{Relay, SharedHardware};
+use crate::modules::logs::{self, Level};
+use crate::modules::models::WeekSchedule;
+use crate::modules::state::AppState;
+use crate::modules::storage;
+use anyhow::Result;
+use chrono::{Datelike, Local, NaiveTime};
+use serde::Serialize;
 use std::time::{Duration, Instant};
-use chrono::Local;
-use rppal::gpio::{Gpio, OutputPin};
-use rusqlite::{params, Connection, Result};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use log::{info, warn};
 
-/// Structure for the light controller with overheat protection.
-///
-/// This struct manages the UV lights and heat lamp for the terrarium,
-/// including safety features that prevent dangerous overheating conditions.
+/// Requested on/off state of the lamps.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct LampStates {
+    pub uv1: bool,
+    pub uv2: bool,
+    pub heat: bool,
+}
+
+impl LampStates {
+    pub fn from_schedule(schedule: &WeekSchedule, t: NaiveTime) -> Self {
+        let on = |w: Option<crate::modules::models::TimeWindow>| w.is_some_and(|w| w.contains(t));
+        LampStates { uv1: on(schedule.uv1), uv2: on(schedule.uv2), heat: on(schedule.heat) }
+    }
+}
+
+/// Why the heat spot is currently not allowed to run.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum HeatBlock {
+    /// No basking temperature measured yet since start
+    NoReading,
+    /// Basking sensor failed or its last value is too old
+    SensorFault,
+    /// Basking temperature at or above the overheat threshold
+    Overheat { temp: f32 },
+    /// Overheat cooldown still running
+    Cooldown { remaining_secs: u64 },
+}
+
 pub struct LightController {
-    uv1: OutputPin,
-    uv2: OutputPin,
-    heat: OutputPin,
-    overheat_temp: u8,
-    overheat_time: Duration,
-    last_overheat: Option<Instant>,
-    current_temp: f32,          // Current temperature from sensor
-    is_overheating: AtomicBool, // Atomic flag for thread-safe access
+    overheat_temp: f32,
+    cooldown: Duration,
+    /// A basking value older than this counts as a sensor fault
+    max_reading_age: Duration,
+    desired: LampStates,
+    basking_temp: Option<f32>,
+    last_reading: Option<Instant>,
+    sensor_failed: bool,
+    cooldown_until: Option<Instant>,
 }
 
-//gpio logic with overheat protection
 impl LightController {
-    /// Creates a new LightController with the specified configuration.
-    ///
-    /// Initializes GPIO pins for controlling UV lights and heat lamp,
-    /// and sets up overheat protection parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Configuration for the light controller containing
-    ///              pin assignments and safety thresholds
-    ///
-    /// # Returns
-    ///
-    /// A Result containing either the new LightController or an error
-    pub fn new(config: LightControlConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let gpio = Gpio::new()?;
-        Ok(LightController {
-            uv1: gpio.get(config.uv_relay1)?.into_output(),
-            uv2: gpio.get(config.uv_relay2)?.into_output(),
-            heat: gpio.get(config.heat_relay)?.into_output(),
+    pub fn new(config: &LightControlConfig, sensor_interval: Duration) -> Self {
+        LightController {
             overheat_temp: config.overheat_temp,
-            overheat_time: Duration::from_secs(config.overheat_cooldown_seconds as u64),
-            last_overheat: None,
-            current_temp: 0.0,
-            is_overheating: AtomicBool::new(false),
-        })
-    }
-
-    /// Controls the first UV light.
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - True to turn on, False to turn off
-    pub fn set_uv1(&mut self, state: bool) {
-        if state {
-            self.uv1.set_high();
-        } else {
-            self.uv1.set_low();
+            cooldown: Duration::from_secs(config.overheat_cooldown_secs),
+            max_reading_age: sensor_interval * 3,
+            desired: LampStates::default(),
+            basking_temp: None,
+            last_reading: None,
+            sensor_failed: false,
+            cooldown_until: None,
         }
     }
 
-    /// Controls the second UV light.
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - True to turn on, False to turn off
-    pub fn set_uv2(&mut self, state: bool) {
-        if state {
-            self.uv2.set_high();
-        } else {
-            self.uv2.set_low();
-        }
+    pub fn desired(&self) -> LampStates {
+        self.desired
     }
 
-    /// Safely controls the heat lamp with overheat protection.
-    ///
-    /// This method will:
-    /// 1. Check if the system is in an overheat condition
-    /// 2. If overheating, it will block attempts to turn on the heat lamp
-    /// 3. Update the overheat state based on current temperature and cooldown
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - True to turn on, False to turn off
-    pub fn control_heat(&mut self, state: bool) {
-        // Check for overheat condition
-        if self.current_temp >= self.overheat_temp as f32 {
-            // Set overheat flag
-            self.is_overheating.store(true, Ordering::SeqCst);
-            
-            // Turn off heat
-            self.set_heat(false);
-            
-            // Record overheat time
-            self.last_overheat = Some(Instant::now());
-            
-            warn!("OVERHEAT PROTECTION ACTIVATED: Temperature ({:.1}°C) exceeds threshold ({} °C)",
-                  self.current_temp, self.overheat_temp);
-                  
-            return;
-        }
-        
-        // Check if we're in the cooldown period after an overheat
-        if let Some(last_overheat) = self.last_overheat {
-            if last_overheat.elapsed() >= self.overheat_time {
-                // Cooldown period is over
-                self.last_overheat = None;
-                self.is_overheating.store(false, Ordering::SeqCst);
-                self.set_heat(state);
-                
-                if state {
-                    info!("Overheat cooldown period complete. Heat enabled.");
+    pub fn set_desired(&mut self, desired: LampStates) {
+        self.desired = desired;
+    }
+
+    /// Feeds a new basking measurement (None = sensor failed).
+    /// Returns a message if the safety state changed in a way worth logging.
+    pub fn update_temperature(&mut self, temp: Option<f32>, now: Instant) -> Option<(Level, String)> {
+        let was_failed = self.sensor_failed;
+        self.sensor_failed = temp.is_none();
+        if let Some(t) = temp {
+            self.basking_temp = Some(t);
+            self.last_reading = Some(now);
+            if t >= self.overheat_temp {
+                let starting = self.cooldown_until.map_or(true, |until| now >= until);
+                // Every reading above the limit restarts the cooldown
+                self.cooldown_until = Some(now + self.cooldown);
+                if starting {
+                    return Some((
+                        Level::Error,
+                        format!(
+                            "OVERHEAT: basking spot {t:.1} °C >= {:.1} °C, heat spot blocked for {} min",
+                            self.overheat_temp,
+                            self.cooldown.as_secs() / 60
+                        ),
+                    ));
                 }
-            } else {
-                // Still in cooldown period
-                self.set_heat(false);
-            }
-        } else {
-            // Normal operation
-            self.set_heat(state);
-        }
-    }
-    
-    /// Internal function to directly control the heat lamp relay.
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - True to turn on, False to turn off
-    fn set_heat(&mut self, state: bool) {
-        if state {
-            self.heat.set_high();
-        } else {
-            self.heat.set_low();
-        }
-    }
-    
-    /// Updates the current temperature reading and checks for overheat conditions.
-    ///
-    /// This method is called periodically with new temperature readings and
-    /// will trigger overheat protection if the temperature exceeds safe limits.
-    ///
-    /// # Arguments
-    ///
-    /// * `temp` - The current temperature from the sensor
-    pub fn update_temperature(&mut self, temp: f32) {
-        self.current_temp = temp;
-        
-        // If temperature is too high, trigger overheat protection
-        if temp >= self.overheat_temp as f32 {
-            if !self.is_overheating.load(Ordering::SeqCst) {
-                self.control_heat(false); // This will activate overheat protection
             }
         }
+        match (was_failed, self.sensor_failed) {
+            (false, true) => Some((Level::Error, "Basking sensor failed, heat spot blocked".into())),
+            (true, false) => Some((Level::Info, "Basking sensor is delivering values again".into())),
+            _ => None,
+        }
     }
-    
-    /// Checks if the system is currently in an overheat state.
-    ///
-    /// # Returns
-    ///
-    /// True if the system is overheating, False otherwise
-    pub fn is_overheating(&self) -> bool {
-        self.is_overheating.load(Ordering::SeqCst)
+
+    /// Returns why the heat spot must stay off, or None if it may run.
+    pub fn heat_block(&self, now: Instant) -> Option<HeatBlock> {
+        let Some(last) = self.last_reading else {
+            return Some(HeatBlock::NoReading);
+        };
+        if self.sensor_failed || now.duration_since(last) > self.max_reading_age {
+            return Some(HeatBlock::SensorFault);
+        }
+        if let Some(t) = self.basking_temp.filter(|t| *t >= self.overheat_temp) {
+            return Some(HeatBlock::Overheat { temp: t });
+        }
+        if let Some(until) = self.cooldown_until.filter(|until| now < *until) {
+            return Some(HeatBlock::Cooldown { remaining_secs: (until - now).as_secs() });
+        }
+        None
     }
-    
-    /// Gets the current temperature reading.
-    ///
-    /// # Returns
-    ///
-    /// The most recent temperature reading in degrees
-    pub fn get_temperature(&self) -> f32 {
-        self.current_temp
+
+    /// True while an overheat or its cooldown blocks the heat spot.
+    pub fn is_overheat(&self, now: Instant) -> bool {
+        matches!(self.heat_block(now), Some(HeatBlock::Overheat { .. } | HeatBlock::Cooldown { .. }))
     }
-    
-    /// Gets the remaining time in the overheat cooldown period.
-    ///
-    /// # Returns
-    ///
-    /// Some(seconds) if in cooldown, None if not in cooldown
-    pub fn get_overheat_cooldown_remaining(&self) -> Option<u64> {
-        self.last_overheat.map(|time| {
-            let elapsed = time.elapsed();
-            if elapsed >= self.overheat_time {
-                0
-            } else {
-                (self.overheat_time.as_secs() - elapsed.as_secs()).min(self.overheat_time.as_secs())
+
+    /// The lamp states that will actually be written (desired states minus safety blocks).
+    pub fn effective(&self, now: Instant) -> LampStates {
+        let mut states = self.desired;
+        if self.heat_block(now).is_some() {
+            states.heat = false;
+        }
+        states
+    }
+
+    /// Writes the effective states to the relays. Returns the relays that changed.
+    pub fn apply(&self, hw: &SharedHardware, now: Instant) -> Result<Vec<(Relay, bool)>> {
+        let target = self.effective(now);
+        let mut hw = hw.lock();
+        let mut changed = Vec::new();
+        for (relay, on) in [(Relay::Uv1, target.uv1), (Relay::Uv2, target.uv2), (Relay::Heat, target.heat)] {
+            if hw.relay(relay) != on {
+                changed.push((relay, on));
             }
-        })
+            // Write every cycle so the output is re-asserted even if something reset it
+            hw.set_relay(relay, on)?;
+        }
+        Ok(changed)
     }
 }
 
-/// Updates the light control system based on schedule and current settings.
-///
-/// This function is called periodically to:
-/// 1. Check the current time against the configured schedule
-/// 2. Check the database for manual overrides
-/// 3. Update UV lights and heat lamp accordingly
-/// 4. Handle safety conditions like overheat protection
-///
-/// # Arguments
-///
-/// * `db` - Database connection for retrieving settings
-/// * `light_controller` - Reference to the light controller
-/// * `config` - Application configuration containing schedules
-///
-/// # Returns
-///
-/// A Result indicating success or an error
-pub async fn update_lights(
-    db: &rusqlite::Connection,
-    light_controller: &Arc<tokio::sync::Mutex<LightController>>,
-    config: &crate::modules::config::Config
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Get current time
-    let now = Local::now();
-    let current_time = now.format("%H:%M").to_string();
-    
-    // Get current schedule from DB
-    let mut stmt = db.prepare("SELECT uv1_start, uv1_end, uv2_start, uv2_end, heat_start, heat_end FROM schedule WHERE ? BETWEEN week_start AND week_end")?;
-    let schedule = stmt.query_row(params![now.format("%Y-%m-%d").to_string()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?
-        ))
-    });
-    
-    // Update relays based on schedule
-    let mut controller = light_controller.lock().await;
-    
-    // Get schedule times (or use defaults if no schedule found)
-    let (uv1_start, uv1_end, uv2_start, uv2_end, heat_start, heat_end) = match schedule {
-        Ok(s) => s,
-        Err(_) => (
-            config.db.def_uv1_start.clone(),
-            config.db.def_uv1_end.clone(),
-            config.db.def_uv2_start.clone(),
-            config.db.def_uv2_end.clone(),
-            config.db.def_heat_start.clone(),
-            config.db.def_heat_end.clone()
-        )
+/// Applies the current lamp states and logs every relay change.
+pub async fn apply_and_log(state: &AppState) -> Result<()> {
+    let changed = {
+        let light = state.light.lock().await;
+        light.apply(&state.hw, Instant::now())?
     };
-    
-    // Check if we're within the scheduled times and update relays
-    controller.set_uv1(is_time_between(&current_time, &uv1_start, &uv1_end));
-    controller.set_uv2(is_time_between(&current_time, &uv2_start, &uv2_end));
-    
-    // Heat is controlled with overheat protection
-    controller.control_heat(is_time_between(&current_time, &heat_start, &heat_end));
-    
+    for (relay, on) in changed {
+        logs::log(&state.pool, Level::Info, &format!("{} switched {}", relay.name(), if on { "on" } else { "off" })).await;
+    }
     Ok(())
 }
 
-/// Checks if the current time is between two specified times.
-///
-/// # Arguments
-///
-/// * `time` - The time to check
-/// * `start` - The start time in 24-hour format (HH:MM)
-/// * `end` - The end time in 24-hour format (HH:MM)
-///
-/// # Returns
-///
-/// True if the time is between start and end, False otherwise
-fn is_time_between(time: &str, start: &str, end: &str) -> bool {
-    time >= start && time <= end
+/// One cycle of the light loop: evaluate the schedule (unless in setup mode) and switch.
+pub async fn update_lights(state: &AppState) -> Result<()> {
+    if !state.config.main.setup_mode {
+        let now = Local::now();
+        let schedule = storage::effective_schedule(&state.pool, &state.config, now.iso_week().week()).await;
+        let desired = LampStates::from_schedule(&schedule, now.time());
+        state.light.lock().await.set_desired(desired);
+    }
+    apply_and_log(state).await
+}
+
+/// Background task: runs `update_lights` every 30 s.
+pub async fn run(state: AppState) {
+    let mut interval = tokio::time::interval(Duration::from_secs(30));
+    loop {
+        interval.tick().await;
+        if let Err(e) = update_lights(&state).await {
+            logs::log(&state.pool, Level::Error, &format!("Light update failed: {e:#}")).await;
+        }
+    }
 }

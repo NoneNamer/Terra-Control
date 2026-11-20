@@ -1,732 +1,527 @@
+//! Web API (Axum) and static file serving for the local web interface.
+
+use crate::modules::state::AppState;
 use axum::{
-    extract::{Json, State, Query, Path},
-    routing::{get, post},
-    Router,
+    http::StatusCode,
     response::{IntoResponse, Response},
-    http::{StatusCode, header},
-    body::Body,
+    Json, Router,
 };
-use serde::{Deserialize, Serialize};
-use sqlx::{SqlitePool, SqlitePoolOptions};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use crate::modules::config::{WebConfig, Config};
-use crate::modules::models::Schedule;
-use crate::modules::gpio::{RelayController, RelayType, RGBWW};
-use crate::modules::lightControl::LightController;
-use crate::modules::ledStrip::LEDController;
-use crate::modules::getData::{CurrentReadings, get_current_readings, get_overheat_status};
-use crate::modules::logs;
-use chrono::{DateTime, Utc, NaiveDateTime, NaiveDate, NaiveTime};
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
+use tower_http::services::ServeDir;
 
-// ===== Utility Types =====
+// ===== Errors =====
 
-/// Custom error type for API responses.
-///
-/// Provides structured error handling for the web API with appropriate
-/// HTTP status codes and error messages for different error situations.
 #[derive(Debug)]
 pub enum ApiError {
-    /// Internal server error (HTTP 500)
-    InternalError(String),
-    /// Resource not found error (HTTP 404)
-    NotFound(String),
-    /// Bad request error (HTTP 400)
     BadRequest(String),
-    /// Unauthorized access error (HTTP 401)
-    Unauthorized(String),
+    NotFound(String),
+    Conflict(String),
+    Internal(String),
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
-            ApiError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            ApiError::NotFound(m) => (StatusCode::NOT_FOUND, m),
+            ApiError::Conflict(m) => (StatusCode::CONFLICT, m),
+            ApiError::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, m),
         };
-        
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
 }
 
-/// Type alias for API responses
+impl From<anyhow::Error> for ApiError {
+    fn from(e: anyhow::Error) -> Self {
+        ApiError::Internal(format!("{e:#}"))
+    }
+}
+
 pub type ApiResult<T> = Result<Json<T>, ApiError>;
 
-/// Success response builder
-pub fn success<T>(data: T) -> ApiResult<T> {
-    Ok(Json(data))
-}
-
-/// Database error mapper
-pub fn map_db_error<E: std::fmt::Display>(err: E) -> ApiError {
-    ApiError::InternalError(format!("Database error: {}", err))
-}
-
-// Shared application state
-/// Shared application state for all API handlers.
-///
-/// This struct contains all the shared resources that the API handlers
-/// need to access, including:
-/// - Database connection pool
-/// - Hardware controllers (light, relay, LED)
-/// - Current sensor readings
-/// - Application configuration
-///
-/// It's used with Axum's State extractor to provide handlers access to these resources.
-pub struct AppState {
-    db_pool: Arc<SqlitePool>,
-    light_controller: Arc<Mutex<LightController>>,
-    relay_controller: Arc<Mutex<RelayController>>,
-    led_controller: Arc<Mutex<LEDController>>,
-    current_readings: Arc<Mutex<CurrentReadings>>,
-    config: Arc<Config>,
-}
-
-// Helper methods for AppState
-impl AppState {
-    /// Access the database pool
-    pub fn db(&self) -> &SqlitePool {
-        &self.db_pool
-    }
-    
-    /// Execute a function with the light controller
-    pub async fn with_light_controller<F, R>(&self, f: F) -> R 
-    where
-        F: FnOnce(&mut LightController) -> R,
-    {
-        let mut controller = self.light_controller.lock().await;
-        f(&mut controller)
-    }
-    
-    /// Execute a function with the relay controller
-    pub async fn with_relay_controller<F, R>(&self, f: F) -> R 
-    where
-        F: FnOnce(&mut RelayController) -> R,
-    {
-        let mut controller = self.relay_controller.lock().await;
-        f(&mut controller)
-    }
-    
-    /// Execute a function with the LED controller
-    pub async fn with_led_controller<F, R>(&self, f: F) -> R 
-    where
-        F: FnOnce(&mut LEDController) -> R,
-    {
-        let mut controller = self.led_controller.lock().await;
-        f(&mut controller)
-    }
-    
-    /// Execute a function with the current readings
-    pub async fn with_current_readings<F, R>(&self, f: F) -> R 
-    where
-        F: FnOnce(&CurrentReadings) -> R,
-    {
-        let readings = self.current_readings.lock().await;
-        f(&readings)
-    }
-    
-    /// Get a reference to the config
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
-    
-    /// Execute a database query and map the error to an ApiError
-    pub async fn query<T, E, F>(&self, query_fn: F) -> Result<T, ApiError>
-    where
-        F: FnOnce(&SqlitePool) -> futures::future::BoxFuture<'_, Result<T, E>>,
-        E: std::fmt::Display,
-    {
-        query_fn(&self.db_pool)
-            .await
-            .map_err(map_db_error)
-    }
-}
-
-// ===== Module Organization =====
-
-mod handlers {
-    pub mod schedule;
-    pub mod led;
-    pub mod monitoring;
-    pub mod system;
-}
-
-use handlers::schedule::*;
-use handlers::led::*;
-use handlers::monitoring::*;
-use handlers::system::*;
-
-/// Creates the main application router with all API endpoints.
-///
-/// This function sets up all the routes for the web interface and API, including:
-/// - LED control endpoints
-/// - Schedule management
-/// - System monitoring and status
-/// - Sensor data access
-///
-/// It also configures static file serving for the web UI and sets up
-/// CORS headers to allow browser access.
-///
-/// # Arguments
-///
-/// * `db_pool` - Database connection pool
-/// * `light_controller` - Reference to the light controller
-/// * `relay_controller` - Reference to the relay controller
-/// * `led_controller` - Reference to the LED controller
-/// * `current_readings` - Shared state for current sensor readings
-/// * `config` - Application configuration
-///
-/// # Returns
-///
-/// An Axum Router configured with all application routes and middleware
-pub async fn create_router(
-    db_pool: &SqlitePool,
-    light_controller: Arc<Mutex<LightController>>,
-    relay_controller: Arc<Mutex<RelayController>>,
-    led_controller: Arc<Mutex<LEDController>>,
-    current_readings: Arc<Mutex<CurrentReadings>>,
-    config: Arc<Config>,
-) -> Router {
-    let state = AppState {
-        db_pool: Arc::new(db_pool.clone()),
-        light_controller,
-        relay_controller,
-        led_controller,
-        current_readings,
-        config,
-    };
-
+/// Builds the router: `/api/...` routes plus the static web interface as fallback.
+pub fn router(state: AppState) -> Router {
+    let static_files = ServeDir::new(&state.config.web.static_dir).append_index_html_on_directories(true);
     Router::new()
-        .merge(schedule_routes())
-        .merge(led_routes())
-        .merge(monitoring_routes())
-        .merge(system_routes())
-        .fallback(handle_not_found)
+        .merge(handlers::monitoring::routes())
+        .merge(handlers::schedule::routes())
+        .merge(handlers::led::routes())
+        .merge(handlers::system::routes())
+        .fallback_service(static_files)
         .with_state(state)
 }
 
-// ===== Fallback Handler =====
-
-/// Handler for routes that don't exist
-async fn handle_not_found() -> impl IntoResponse {
-    (
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({
-            "error": "Not found",
-            "message": "The requested resource does not exist"
-        }))
-    )
-}
-
-// ===== Route Definitions =====
-
-/// Schedule management routes
-fn schedule_routes() -> Router {
-    Router::new()
-        .route("/api/schedule", get(get_schedule).post(update_schedule))
-}
-
-/// LED control routes
-fn led_routes() -> Router {
-    Router::new()
-        .route("/api/led/power", post(set_led_power))
-        .route("/api/led/color", post(set_led_color))
-        .route("/api/led/status", get(get_led_status))
-        .route("/api/led/natural", post(set_natural_light_settings))
-        .route("/api/led/presets", 
-            get(get_natural_light_presets)
-            .post(set_natural_light_presets))
-}
-
-/// Monitoring and data visualization routes
-fn monitoring_routes() -> Router {
-    Router::new()
-        .route("/api/values", get(get_current_values))
-        .route("/api/graph/today", get(get_graph_data_today))
-        .route("/api/graph/yesterday", get(get_graph_data_yesterday))
-        .route("/api/data/download", get(download_sensor_data))
-}
-
-/// System management routes
-fn system_routes() -> Router {
-    Router::new()
-        .route("/api/system/status", get(get_system_status))
-        .route("/api/logs", get(get_logs))
-        .route("/api/logs/download", get(download_logs))
-}
-
-// ===== Handler Modules =====
-
-// Schedule handlers module
-pub mod handlers {
+mod handlers {
     use super::*;
-    
-    pub mod schedule {
-        use super::*;
-        
-        /// Handler: Fetch schedule as JSON
-        pub async fn get_schedule(State(state): State<AppState>) -> ApiResult<Vec<Schedule>> {
-            let db_pool = &state.db_pool;
 
-            sqlx::query_as!(
-                Schedule,
-                r#"
-                SELECT week_number, uv1_start, uv1_end, uv2_start, uv2_end, heat_start, heat_end,
-                       led_r AS red, led_g AS green, led_b AS blue, led_cw, led_ww
-                FROM schedule
-                ORDER BY week_number
-                "#
-            )
-            .fetch_all(db_pool)
-            .await
-            .map_err(map_db_error)
-            .map(Json)
-        }
-
-        /// Handler: Update schedule via JSON
-        pub async fn update_schedule(
-            Json(payload): Json<Vec<Schedule>>,
-            State(state): State<AppState>,
-        ) -> ApiResult<&'static str> {
-            let db_pool = &state.db_pool;
-
-            for setting in payload {
-                sqlx::query!(
-                    r#"
-                    INSERT INTO schedule (week_number, uv1_start, uv1_end, uv2_start, uv2_end, heat_start, heat_end, led_r, led_g, led_b, led_cw, led_ww)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(week_number) DO UPDATE SET
-                        uv1_start = excluded.uv1_start,
-                        uv1_end = excluded.uv1_end,
-                        uv2_start = excluded.uv2_start,
-                        uv2_end = excluded.uv2_end,
-                        heat_start = excluded.heat_start,
-                        heat_end = excluded.heat_end,
-                        led_r = excluded.led_r,
-                        led_g = excluded.led_g,
-                        led_b = excluded.led_b,
-                        led_cw = excluded.led_cw,
-                        led_ww = excluded.led_ww
-                    "#,
-                    setting.week,
-                    setting.uv1_start,
-                    setting.uv1_end,
-                    setting.uv2_start,
-                    setting.uv2_end,
-                    setting.heat_start,
-                    setting.heat_end,
-                    setting.red,
-                    setting.green,
-                    setting.blue,
-                    setting.led_cw,
-                    setting.led_ww,
-                )
-                .execute(db_pool)
-                .await
-                .map_err(map_db_error)?;
-            }
-
-            success("Schedule updated successfully")
-        }
-    }
-
-    // LED handlers module
-    pub mod led {
-        use super::*;
-        
-        #[derive(Deserialize)]
-        pub struct LEDPowerRequest {
-            pub power: bool,
-        }
-
-        /// Set LED power state
-        pub async fn set_led_power(
-            State(state): State<AppState>,
-            Json(payload): Json<LEDPowerRequest>,
-        ) -> ApiResult<&'static str> {
-            let result = if payload.power {
-                state.with_led_controller(|controller| {
-                    controller.power_on()
-                }).await
-            } else {
-                state.with_led_controller(|controller| {
-                    controller.power_off()
-                }).await
-            };
-            
-            result.map_err(|e| ApiError::InternalError(e.to_string()))?;
-            
-            success("LED power state updated")
-        }
-
-        #[derive(Deserialize)]
-        pub struct LEDColorRequest {
-            pub r: u8,
-            pub g: u8,
-            pub b: u8,
-            pub ww: u8,
-            pub cw: u8,
-        }
-
-        /// Set LED color
-        pub async fn set_led_color(
-            State(state): State<AppState>,
-            Json(payload): Json<LEDColorRequest>,
-        ) -> ApiResult<&'static str> {
-            let mut led_controller = state.led_controller.lock().await;
-            
-            led_controller.set_rgbww(
-                payload.r, 
-                payload.g, 
-                payload.b, 
-                payload.ww, 
-                payload.cw
-            ).await.map_err(|e| ApiError::InternalError(e.to_string()))?;
-            
-            // Update the database with the new settings
-            let db_pool = &state.db_pool;
-            sqlx::query!(
-                r#"
-                INSERT OR REPLACE INTO led_settings (id, r, g, b, ww, cw, enabled)
-                VALUES (1, ?, ?, ?, ?, ?, true)
-                "#,
-                payload.r as i32,
-                payload.g as i32,
-                payload.b as i32,
-                payload.ww as i32,
-                payload.cw as i32,
-            )
-            .execute(db_pool)
-            .await
-            .map_err(map_db_error)?;
-            
-            success("LED color updated")
-        }
-
-        #[derive(Deserialize)]
-        pub struct NaturalLightRequest {
-            pub override_settings: bool,
-            pub season_weight: f32,
-        }
-
-        /// Set natural light settings
-        pub async fn set_natural_light_settings(
-            State(state): State<AppState>,
-            Json(payload): Json<NaturalLightRequest>,
-        ) -> Result<Json<&'static str>, String> {
-            let mut led_controller = state.led_controller.lock().await;
-            
-            led_controller.set_natural_light_mode(
-                payload.override_settings,
-                payload.season_weight
-            ).await.map_err(|e| e.to_string())?;
-            
-            Ok(Json("Natural light settings updated"))
-        }
-
-        #[derive(Serialize)]
-        pub struct LEDStatus {
-            pub power: bool,
-            pub r: u8,
-            pub g: u8,
-            pub b: u8,
-            pub ww: u8,
-            pub cw: u8,
-            pub use_natural: bool,
-            pub season_weight: f32,
-        }
-
-        /// Get LED status
-        pub async fn get_led_status(
-            State(state): State<AppState>,
-        ) -> Result<Json<LEDStatus>, String> {
-            let led_controller = state.led_controller.lock().await;
-            
-            let status = LEDStatus {
-                power: led_controller.is_on(),
-                r: led_controller.get_red(),
-                g: led_controller.get_green(),
-                b: led_controller.get_blue(),
-                ww: led_controller.get_warm_white(),
-                cw: led_controller.get_cool_white(),
-                use_natural: led_controller.is_natural_mode(),
-                season_weight: led_controller.get_season_weight(),
-            };
-            
-            Ok(Json(status))
-        }
-
-        #[derive(Deserialize, Serialize)]
-        pub struct NaturalLightPresetsRequest {
-            pub morning_r: u8,
-            pub morning_g: u8,
-            pub morning_b: u8,
-            pub morning_ww: u8,
-            pub morning_cw: u8,
-            pub noon_r: u8,
-            pub noon_g: u8,
-            pub noon_b: u8,
-            pub noon_ww: u8,
-            pub noon_cw: u8,
-            pub evening_r: u8,
-            pub evening_g: u8,
-            pub evening_b: u8,
-            pub evening_ww: u8,
-            pub evening_cw: u8
-        }
-
-        /// Set natural light presets
-        pub async fn set_natural_light_presets(
-            State(state): State<AppState>,
-            Json(payload): Json<NaturalLightPresetsRequest>,
-        ) -> Result<Json<&'static str>, String> {
-            let mut led_controller = state.led_controller.lock().await;
-            
-            led_controller.set_natural_light_presets(
-                (payload.morning_r, payload.morning_g, payload.morning_b, payload.morning_ww, payload.morning_cw),
-                (payload.noon_r, payload.noon_g, payload.noon_b, payload.noon_ww, payload.noon_cw),
-                (payload.evening_r, payload.evening_g, payload.evening_b, payload.evening_ww, payload.evening_cw),
-            ).await.map_err(|e| e.to_string())?;
-            
-            Ok(Json("Natural light presets updated"))
-        }
-
-        /// Get natural light presets
-        pub async fn get_natural_light_presets(
-            State(state): State<AppState>,
-        ) -> Result<Json<NaturalLightPresetsRequest>, String> {
-            let led_controller = state.led_controller.lock().await;
-            
-            let (morning, noon, evening) = led_controller.get_natural_light_presets();
-            
-            let presets = NaturalLightPresetsRequest {
-                morning_r: morning.0,
-                morning_g: morning.1,
-                morning_b: morning.2,
-                morning_ww: morning.3,
-                morning_cw: morning.4,
-                noon_r: noon.0,
-                noon_g: noon.1,
-                noon_b: noon.2,
-                noon_ww: noon.3,
-                noon_cw: noon.4,
-                evening_r: evening.0,
-                evening_g: evening.1,
-                evening_b: evening.2,
-                evening_ww: evening.3,
-                evening_cw: evening.4,
-            };
-            
-            Ok(Json(presets))
-        }
-    }
-
-    // Monitoring handlers module
     pub mod monitoring {
         use super::*;
-        
-        #[derive(Serialize)]
-        pub struct CurrentValuesResponse {
-            pub timestamp: String,
-            pub baskingTemp: f32,
-            pub controlTemp: f32,
-            pub coolZoneTemp: f32,
-            pub humidity: f32,
-            pub uv1: f32,
-            pub uv2: f32,
-            pub uv1_on: bool,
-            pub uv2_on: bool,
-            pub heat_on: bool,
-            pub led_on: bool,
-            pub overheat: bool,
+        use crate::modules::gpio::Relay;
+        use crate::modules::lightControl::HeatBlock;
+        use crate::modules::logs;
+        use crate::modules::storage;
+        use axum::{extract::{Query, State}, http::header, routing::get};
+        use chrono::{Local, NaiveDate};
+        use serde::{Deserialize, Serialize};
+        use std::time::Instant;
+
+        pub fn routes() -> Router<AppState> {
+            Router::new()
+                .route("/api/values", get(current_values))
+                .route("/api/graph/today", get(graph_today))
+                .route("/api/graph/yesterday", get(graph_yesterday))
+                .route("/api/data/download", get(download_data))
         }
 
-        /// Get current sensor values
-        pub async fn get_current_values(
-            State(state): State<AppState>,
-        ) -> Json<CurrentValuesResponse> {
-            let current_readings = state.current_readings.lock().await;
-            let light_controller = state.light_controller.lock().await;
-            let led_controller = state.led_controller.lock().await;
-            
-            let (overheat, _) = get_overheat_status(&state.db_pool).await;
-            
-            let response = CurrentValuesResponse {
-                timestamp: Utc::now().to_rfc3339(),
-                baskingTemp: current_readings.basking_temp,
-                controlTemp: current_readings.control_temp,
-                coolZoneTemp: current_readings.cool_zone_temp,
-                humidity: current_readings.humidity,
-                uv1: current_readings.uv1_intensity,
-                uv2: current_readings.uv2_intensity,
-                uv1_on: light_controller.is_uv1_on(),
-                uv2_on: light_controller.is_uv2_on(),
-                heat_on: light_controller.is_heat_on(),
-                led_on: led_controller.is_on(),
-                overheat,
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct CurrentValues {
+            /// Time of the measurement (None before the first one)
+            timestamp: Option<String>,
+            basking_temp: Option<f32>,
+            cool_zone_temp: Option<f32>,
+            enclosure_temp: Option<f32>,
+            air_temp: Option<f32>,
+            humidity: Option<f32>,
+            uv1_on: bool,
+            uv2_on: bool,
+            heat_on: bool,
+            led_on: bool,
+            overheat: bool,
+            heat_block: Option<HeatBlock>,
+        }
+
+        async fn current_values(State(state): State<AppState>) -> Json<CurrentValues> {
+            let readings = state.readings.read().await.clone();
+            let (overheat, heat_block) = {
+                let light = state.light.lock().await;
+                let now = Instant::now();
+                (light.is_overheat(now), light.heat_block(now))
             };
-            
-            Json(response)
+            let led_on = !state.led.lock().await.output().is_off();
+            let hw = state.hw.lock();
+            Json(CurrentValues {
+                timestamp: readings.as_ref().map(|r| r.timestamp.format("%Y-%m-%d %H:%M:%S").to_string()),
+                basking_temp: readings.as_ref().and_then(|r| r.basking_temp),
+                cool_zone_temp: readings.as_ref().and_then(|r| r.cool_temp),
+                enclosure_temp: readings.as_ref().and_then(|r| r.enclosure_temp),
+                air_temp: readings.as_ref().and_then(|r| r.air_temp),
+                humidity: readings.as_ref().and_then(|r| r.humidity),
+                uv1_on: hw.relay(Relay::Uv1),
+                uv2_on: hw.relay(Relay::Uv2),
+                heat_on: hw.relay(Relay::Heat),
+                led_on,
+                overheat,
+                heat_block,
+            })
         }
 
         #[derive(Serialize)]
-        pub struct GraphDataPoint {
-            pub time: String,
-            pub temperature: f32,
-            pub controlTemp: f32,
-            pub coolZoneTemp: f32,
-            pub humidity: f32,
+        #[serde(rename_all = "camelCase")]
+        pub struct GraphPoint {
+            time: String,
+            /// Basking temperature (name kept for the existing chart code)
+            temperature: Option<f64>,
+            cool_zone_temp: Option<f64>,
+            air_temp: Option<f64>,
+            humidity: Option<f64>,
         }
 
-        /// Get today's graph data
-        pub async fn get_graph_data_today(
-            State(state): State<AppState>,
-        ) -> Json<Vec<GraphDataPoint>> {
-            let today = chrono::Local::now().date_naive();
-            Json(get_graph_data_for_date(&state.db_pool, today).await)
+        async fn graph_for(state: &AppState, day: NaiveDate) -> ApiResult<Vec<GraphPoint>> {
+            let rows = storage::get_readings(&state.pool, day, day).await?;
+            Ok(Json(
+                rows.into_iter()
+                    .map(|r| GraphPoint {
+                        // "YYYY-MM-DD HH:MM:SS" -> "HH:MM"
+                        time: r.timestamp.get(11..16).unwrap_or_default().to_string(),
+                        temperature: r.basking_temp,
+                        cool_zone_temp: r.cool_temp,
+                        air_temp: r.air_temp,
+                        humidity: r.humidity,
+                    })
+                    .collect(),
+            ))
         }
 
-        /// Get yesterday's graph data
-        pub async fn get_graph_data_yesterday(
-            State(state): State<AppState>,
-        ) -> Json<Vec<GraphDataPoint>> {
-            let yesterday = chrono::Local::now().date_naive() - chrono::Duration::days(1);
-            Json(get_graph_data_for_date(&state.db_pool, yesterday).await)
+        async fn graph_today(State(state): State<AppState>) -> ApiResult<Vec<GraphPoint>> {
+            graph_for(&state, Local::now().date_naive()).await
         }
 
-        /// Helper function to get graph data for a specific date
-        pub async fn get_graph_data_for_date(pool: &SqlitePool, date: NaiveDate) -> Vec<GraphDataPoint> {
-            let start_of_day = date.and_hms_opt(0, 0, 0).unwrap();
-            let end_of_day = date.and_hms_opt(23, 59, 59).unwrap();
-            
-            let result = sqlx::query!(
-                r#"
-                SELECT timestamp, basking_temp, control_temp, cool_zone_temp, humidity
-                FROM readings
-                WHERE timestamp BETWEEN ? AND ?
-                ORDER BY timestamp
-                "#,
-                start_of_day.to_string(),
-                end_of_day.to_string()
-            )
-            .fetch_all(pool)
-            .await;
-            
-            match result {
-                Ok(rows) => {
-                    rows.into_iter().map(|row| {
-                        let dt = NaiveDateTime::parse_from_str(&row.timestamp, "%Y-%m-%d %H:%M:%S")
-                            .unwrap_or_else(|_| NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
-                            
-                        GraphDataPoint {
-                            time: dt.format("%H:%M").to_string(),
-                            temperature: row.basking_temp,
-                            controlTemp: row.control_temp,
-                            coolZoneTemp: row.cool_zone_temp,
-                            humidity: row.humidity,
-                        }
-                    }).collect()
-                },
-                Err(_) => Vec::new(),
-            }
+        async fn graph_yesterday(State(state): State<AppState>) -> ApiResult<Vec<GraphPoint>> {
+            let yesterday = Local::now().date_naive().pred_opt().expect("valid date");
+            graph_for(&state, yesterday).await
         }
 
         #[derive(Deserialize)]
-        pub struct SensorDataQueryParams {
-            pub start: String,
-            pub end: String,
+        pub struct DateRange {
+            start: String,
+            end: String,
         }
 
-        /// Download sensor data as CSV
-        pub async fn download_sensor_data(
+        async fn download_data(
             State(state): State<AppState>,
-            Query(params): Query<SensorDataQueryParams>,
-        ) -> Result<impl IntoResponse, (StatusCode, String)> {
-            // ... existing implementation ...
-        
-            // Placeholder for the actual implementation
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/csv")
-                .header(
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"sensor_data_{}.csv\"", params.start)
-                )
-                .body(Body::from(String::new()))
-                .unwrap())
+            Query(range): Query<DateRange>,
+        ) -> Result<Response, ApiError> {
+            let parse = |s: &str| {
+                NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|_| ApiError::BadRequest(format!("invalid date '{s}', expected YYYY-MM-DD")))
+            };
+            let (start, end) = (parse(&range.start)?, parse(&range.end)?);
+            if end < start {
+                return Err(ApiError::BadRequest("end date is before start date".into()));
+            }
+            let rows = storage::get_readings(&state.pool, start, end).await?;
+            let filename = format!("terrarium_data_{start}_to_{end}.csv");
+            Ok((
+                [
+                    (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+                    (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\"")),
+                ],
+                logs::readings_csv(&rows),
+            )
+                .into_response())
         }
     }
 
-    // System handlers module
-    pub mod system {
+    pub mod schedule {
         use super::*;
-        
-        #[derive(Serialize)]
-        pub struct SystemStatusResponse {
-            pub version: String,
-            pub uptime_seconds: u64,
-            pub overheat_detected: bool,
-            pub last_overheat: Option<String>,
-            pub cooldown_remaining: Option<u64>,
-            pub data_collection_interval: u64,
-            pub free_disk_space_mb: u64,
+        use crate::modules::lightControl;
+        use crate::modules::models::ScheduleRow;
+        use crate::modules::storage;
+        use axum::{extract::{Path, State}, routing::get};
+        use chrono::{Datelike, Local};
+        use serde::Serialize;
+
+        pub fn routes() -> Router<AppState> {
+            Router::new()
+                .route("/api/schedule", get(get_all))
+                .route("/api/schedule/current", get(get_current))
+                .route("/api/schedule/{week}", get(get_week).put(put_week).delete(delete_week))
         }
 
-        /// Get system status
-        pub async fn get_system_status(
+        fn check_week(week: i64) -> Result<(), ApiError> {
+            if (1..=53).contains(&week) {
+                Ok(())
+            } else {
+                Err(ApiError::BadRequest(format!("week must be 1-53, got {week}")))
+            }
+        }
+
+        /// All weeks that have their own row (weeks without a row use the default).
+        async fn get_all(State(state): State<AppState>) -> ApiResult<Vec<ScheduleRow>> {
+            Ok(Json(storage::get_schedule(&state.pool).await?))
+        }
+
+        #[derive(Serialize)]
+        pub struct WeekResponse {
+            /// "database" or "default"
+            source: &'static str,
+            #[serde(flatten)]
+            schedule: ScheduleRow,
+        }
+
+        async fn week_response(state: &AppState, week: i64) -> Result<WeekResponse, ApiError> {
+            check_week(week)?;
+            Ok(match storage::get_schedule_week(&state.pool, week).await? {
+                Some(row) => WeekResponse { source: "database", schedule: row },
+                None => WeekResponse {
+                    source: "default",
+                    schedule: ScheduleRow::from_week_schedule(week, &state.config.default_schedule()),
+                },
+            })
+        }
+
+        async fn get_week(State(state): State<AppState>, Path(week): Path<i64>) -> ApiResult<WeekResponse> {
+            Ok(Json(week_response(&state, week).await?))
+        }
+
+        async fn get_current(State(state): State<AppState>) -> ApiResult<WeekResponse> {
+            let week = Local::now().iso_week().week() as i64;
+            Ok(Json(week_response(&state, week).await?))
+        }
+
+        async fn put_week(
             State(state): State<AppState>,
-        ) -> Json<SystemStatusResponse> {
-            // ... existing implementation ...
-            
-            // Placeholder for the actual implementation
-            Json(SystemStatusResponse {
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                uptime_seconds: 0,
-                overheat_detected: false,
-                last_overheat: None,
-                cooldown_remaining: None,
-                data_collection_interval: 60,
-                free_disk_space_mb: 0,
+            Path(week): Path<i64>,
+            Json(mut row): Json<ScheduleRow>,
+        ) -> ApiResult<ScheduleRow> {
+            check_week(week)?;
+            row.week = week;
+            // Validate and store in normalised form ("HH:MM", empty -> NULL)
+            let schedule = row.to_week_schedule().map_err(ApiError::BadRequest)?;
+            let row = ScheduleRow::from_week_schedule(week, &schedule);
+            storage::upsert_schedule_week(&state.pool, &row).await?;
+            lightControl::update_lights(&state).await?;
+            crate::modules::ledStrip::update_leds(&state).await?;
+            Ok(Json(row))
+        }
+
+        async fn delete_week(State(state): State<AppState>, Path(week): Path<i64>) -> ApiResult<WeekResponse> {
+            check_week(week)?;
+            storage::delete_schedule_week(&state.pool, week).await?;
+            lightControl::update_lights(&state).await?;
+            crate::modules::ledStrip::update_leds(&state).await?;
+            Ok(Json(week_response(&state, week).await?))
+        }
+    }
+
+    pub mod led {
+        use super::*;
+        use crate::modules::ledStrip::update_leds;
+        use crate::modules::models::{LedMode, LedPresets, LedSettings, Rgbww};
+        use crate::modules::storage;
+        use axum::{extract::State, routing::{get, post}};
+        use serde::{Deserialize, Serialize};
+
+        pub fn routes() -> Router<AppState> {
+            Router::new()
+                .route("/api/led/status", get(status))
+                .route("/api/led/power", post(set_power))
+                .route("/api/led/color", post(set_color))
+                .route("/api/led/natural", post(set_natural))
+                .route("/api/led/brightness", post(set_brightness))
+                .route("/api/led/presets", get(get_presets).post(set_presets))
+        }
+
+        #[derive(Serialize)]
+        pub struct LedStatus {
+            /// LEDs enabled by the user (the schedule may still keep them off)
+            power: bool,
+            /// Manual colour
+            r: u8,
+            g: u8,
+            b: u8,
+            ww: u8,
+            cw: u8,
+            use_natural: bool,
+            season_weight: f32,
+            brightness: u8,
+            /// Colour currently written to the strips
+            output: Rgbww,
+        }
+
+        async fn status(State(state): State<AppState>) -> Json<LedStatus> {
+            let led = state.led.lock().await;
+            let s = led.settings();
+            Json(LedStatus {
+                power: s.enabled,
+                r: s.manual_color.r,
+                g: s.manual_color.g,
+                b: s.manual_color.b,
+                ww: s.manual_color.ww,
+                cw: s.manual_color.cw,
+                use_natural: s.mode == LedMode::Natural,
+                season_weight: s.season_weight,
+                brightness: s.brightness,
+                output: led.output(),
+            })
+        }
+
+        /// Changes the settings, stores them and applies them immediately.
+        async fn change(state: &AppState, f: impl FnOnce(&mut LedSettings)) -> ApiResult<&'static str> {
+            let settings = {
+                let mut led = state.led.lock().await;
+                let mut s = led.settings();
+                f(&mut s);
+                led.set_settings(s);
+                s
+            };
+            storage::save_led_settings(&state.pool, &settings).await?;
+            update_leds(state).await?;
+            Ok(Json("ok"))
+        }
+
+        #[derive(Deserialize)]
+        pub struct PowerRequest {
+            power: bool,
+        }
+
+        async fn set_power(State(state): State<AppState>, Json(req): Json<PowerRequest>) -> ApiResult<&'static str> {
+            change(&state, |s| s.enabled = req.power).await
+        }
+
+        async fn set_color(State(state): State<AppState>, Json(color): Json<Rgbww>) -> ApiResult<&'static str> {
+            change(&state, |s| s.manual_color = color).await
+        }
+
+        #[derive(Deserialize)]
+        pub struct NaturalRequest {
+            /// true = manual colour, false = natural daily curve
+            override_settings: bool,
+            season_weight: f32,
+        }
+
+        async fn set_natural(State(state): State<AppState>, Json(req): Json<NaturalRequest>) -> ApiResult<&'static str> {
+            if !(0.0..=1.0).contains(&req.season_weight) {
+                return Err(ApiError::BadRequest("season_weight must be 0.0-1.0".into()));
+            }
+            change(&state, |s| {
+                s.mode = if req.override_settings { LedMode::Manual } else { LedMode::Natural };
+                s.season_weight = req.season_weight;
+            })
+            .await
+        }
+
+        #[derive(Deserialize)]
+        pub struct BrightnessRequest {
+            brightness: u8,
+        }
+
+        async fn set_brightness(
+            State(state): State<AppState>,
+            Json(req): Json<BrightnessRequest>,
+        ) -> ApiResult<&'static str> {
+            if req.brightness > 100 {
+                return Err(ApiError::BadRequest("brightness must be 0-100".into()));
+            }
+            change(&state, |s| s.brightness = req.brightness).await
+        }
+
+        /// Flat preset format used by led.html (morning_r, morning_g, ...).
+        #[derive(Serialize, Deserialize)]
+        pub struct PresetsDto {
+            morning_r: u8, morning_g: u8, morning_b: u8, morning_ww: u8, morning_cw: u8,
+            noon_r: u8, noon_g: u8, noon_b: u8, noon_ww: u8, noon_cw: u8,
+            evening_r: u8, evening_g: u8, evening_b: u8, evening_ww: u8, evening_cw: u8,
+        }
+
+        impl From<LedPresets> for PresetsDto {
+            fn from(p: LedPresets) -> Self {
+                PresetsDto {
+                    morning_r: p.morning.r, morning_g: p.morning.g, morning_b: p.morning.b,
+                    morning_ww: p.morning.ww, morning_cw: p.morning.cw,
+                    noon_r: p.noon.r, noon_g: p.noon.g, noon_b: p.noon.b, noon_ww: p.noon.ww, noon_cw: p.noon.cw,
+                    evening_r: p.evening.r, evening_g: p.evening.g, evening_b: p.evening.b,
+                    evening_ww: p.evening.ww, evening_cw: p.evening.cw,
+                }
+            }
+        }
+
+        impl From<PresetsDto> for LedPresets {
+            fn from(d: PresetsDto) -> Self {
+                LedPresets {
+                    morning: Rgbww { r: d.morning_r, g: d.morning_g, b: d.morning_b, ww: d.morning_ww, cw: d.morning_cw },
+                    noon: Rgbww { r: d.noon_r, g: d.noon_g, b: d.noon_b, ww: d.noon_ww, cw: d.noon_cw },
+                    evening: Rgbww { r: d.evening_r, g: d.evening_g, b: d.evening_b, ww: d.evening_ww, cw: d.evening_cw },
+                }
+            }
+        }
+
+        async fn get_presets(State(state): State<AppState>) -> Json<PresetsDto> {
+            Json(state.led.lock().await.presets().into())
+        }
+
+        async fn set_presets(State(state): State<AppState>, Json(dto): Json<PresetsDto>) -> ApiResult<&'static str> {
+            let presets: LedPresets = dto.into();
+            storage::save_led_presets(&state.pool, &presets).await?;
+            state.led.lock().await.set_presets(presets);
+            update_leds(&state).await?;
+            Ok(Json("ok"))
+        }
+    }
+
+    pub mod system {
+        use super::*;
+        use crate::modules::lightControl::{self, HeatBlock, LampStates};
+        use crate::modules::logs::{self, Level};
+        use axum::{
+            extract::{Path, Query, State},
+            http::header,
+            routing::{get, post},
+        };
+        use chrono::{Datelike, Local};
+        use serde::{Deserialize, Serialize};
+        use std::time::Instant;
+
+        pub fn routes() -> Router<AppState> {
+            Router::new()
+                .route("/api/system/status", get(status))
+                .route("/api/logs", get(get_logs))
+                .route("/api/logs/download", get(download_logs))
+                .route("/api/relays/{relay}", post(set_relay))
+        }
+
+        #[derive(Serialize)]
+        pub struct SystemStatus {
+            version: &'static str,
+            uptime_seconds: u64,
+            hardware: &'static str,
+            setup_mode: bool,
+            calendar_week: u32,
+            data_collection_interval: u64,
+            desired: LampStates,
+            heat_block: Option<HeatBlock>,
+        }
+
+        async fn status(State(state): State<AppState>) -> Json<SystemStatus> {
+            let (desired, heat_block) = {
+                let light = state.light.lock().await;
+                (light.desired(), light.heat_block(Instant::now()))
+            };
+            Json(SystemStatus {
+                version: env!("CARGO_PKG_VERSION"),
+                uptime_seconds: state.started.elapsed().as_secs(),
+                hardware: state.hw.lock().backend(),
+                setup_mode: state.config.main.setup_mode,
+                calendar_week: Local::now().iso_week().week(),
+                data_collection_interval: state.config.sensors.interval_secs,
+                desired,
+                heat_block,
             })
         }
 
         #[derive(Deserialize)]
-        pub struct LogQueryParams {
-            pub filter: Option<String>,
-            pub limit: Option<i64>,
+        pub struct LogQuery {
+            filter: Option<String>,
+            limit: Option<i64>,
         }
 
-        /// Get system logs
-        pub async fn get_logs(
-            State(state): State<AppState>,
-            Query(params): Query<LogQueryParams>,
-        ) -> Result<Json<Vec<logs::LogEntry>>, (StatusCode, String)> {
-            // ... existing implementation ...
-            
-            // Placeholder for the actual implementation
-            Ok(Json(Vec::new()))
+        async fn get_logs(State(state): State<AppState>, Query(q): Query<LogQuery>) -> ApiResult<Vec<logs::LogEntry>> {
+            let filter = q.filter.as_deref().and_then(Level::parse_filter);
+            Ok(Json(logs::get_log_entries(&state.pool, filter, q.limit.unwrap_or(50)).await?))
         }
 
-        /// Download logs as file
-        pub async fn download_logs(
+        async fn download_logs(State(state): State<AppState>) -> Result<Response, ApiError> {
+            let zip = logs::logs_zip(&state.pool).await?;
+            let filename = format!("terrarium_logs_{}.zip", Local::now().format("%Y-%m-%d"));
+            Ok((
+                [
+                    (header::CONTENT_TYPE, "application/zip".to_string()),
+                    (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\"")),
+                ],
+                zip,
+            )
+                .into_response())
+        }
+
+        #[derive(Deserialize)]
+        pub struct RelayRequest {
+            on: bool,
+        }
+
+        /// Manual lamp switching, only in setup mode. Overheat protection still applies to heat.
+        async fn set_relay(
             State(state): State<AppState>,
-        ) -> Result<impl IntoResponse, (StatusCode, String)> {
-            // ... existing implementation ...
-            
-            // Placeholder for the actual implementation
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/plain")
-                .header(
-                    header::CONTENT_DISPOSITION,
-                    "attachment; filename=\"system_logs.txt\""
-                )
-                .body(Body::from(String::new()))
-                .unwrap())
+            Path(relay): Path<String>,
+            Json(req): Json<RelayRequest>,
+        ) -> ApiResult<LampStates> {
+            if !state.config.main.setup_mode {
+                return Err(ApiError::Conflict("manual switching is only allowed in setup mode".into()));
+            }
+            let desired = {
+                let mut light = state.light.lock().await;
+                let mut d = light.desired();
+                match relay.as_str() {
+                    "uv1" => d.uv1 = req.on,
+                    "uv2" => d.uv2 = req.on,
+                    "heat" => d.heat = req.on,
+                    other => return Err(ApiError::NotFound(format!("unknown relay '{other}' (uv1, uv2, heat)"))),
+                }
+                light.set_desired(d);
+                d
+            };
+            logs::log(&state.pool, Level::Info, &format!("Manual request: {relay} {}", if req.on { "on" } else { "off" })).await;
+            lightControl::apply_and_log(&state).await?;
+            Ok(Json(desired))
         }
     }
 }

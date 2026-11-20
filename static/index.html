@@ -17,10 +17,11 @@
         </nav><hr>
 
         <h2>Current Readings</h2>
-        <p>Basking Temperature 1: <span id="baskingTemp">--</span>&deg;C</p>
-        <p>Basking Temperature 2: <span id="controlTemp">--</span>&deg;C</p>
+        <p>Basking Temperature: <span id="baskingTemp">--</span>&deg;C</p>
         <p>Cool Zone Temperature: <span id="coolZoneTemp">--</span>&deg;C</p>
-        <p>Humidity: <span id="humidity">--</span>%</p><hr>
+        <p>Air Temperature: <span id="airTemp">--</span>&deg;C</p>
+        <p>Humidity: <span id="humidity">--</span>%</p>
+        <p>Enclosure Temperature: <span id="enclosureTemp">--</span>&deg;C</p><hr>
 
         <div class="graph-container">
             <div class="graph-box">
@@ -30,9 +31,11 @@
                 <canvas id="yesterdayGraph"></canvas>
             </div>
         </div><br><br><hr>
-        <h2>UV Status</h2>
-        <p>UV1: <span id="UV1">--</span> UVI <span id="UV1Status">--</span></p>
-        <p>UV2: <span id="UV2">--</span> UVI <span id="UV2Status">--</span></p>
+        <h2>Lamp Status</h2>
+        <p>UV1: <span id="UV1Status">--</span></p>
+        <p>UV2: <span id="UV2Status">--</span></p>
+        <p>Heat: <span id="heatStatus">--</span> <span id="heatBlock"></span></p>
+        <p>LEDs: <span id="ledStatus">--</span></p>
         <br><br><hr>
     </div>
 
@@ -97,19 +100,21 @@
                 
                 const data = await response.json();
                 
-                // Update the HTML with actual values
-                document.getElementById('baskingTemp').textContent = data.baskingTemp.toFixed(1);
-                document.getElementById('controlTemp').textContent = data.controlTemp.toFixed(1);
-                document.getElementById('coolZoneTemp').textContent = data.coolZoneTemp.toFixed(1);
-                document.getElementById('humidity').textContent = data.humidity.toFixed(1);
-                
-                // Update UV values and status
-                document.getElementById('UV1').textContent = data.uv1.toFixed(1);
-                document.getElementById('UV2').textContent = data.uv2.toFixed(1);
-                
-                // Update UV status indicators
-                document.getElementById('UV1Status').textContent = data.uv1_on ? '✅' : '❌';
-                document.getElementById('UV2Status').textContent = data.uv2_on ? '✅' : '❌';
+                // Sensor values are null when a sensor could not be read
+                const fmt = v => (v === null || v === undefined) ? '--' : v.toFixed(1);
+                document.getElementById('baskingTemp').textContent = fmt(data.baskingTemp);
+                document.getElementById('coolZoneTemp').textContent = fmt(data.coolZoneTemp);
+                document.getElementById('airTemp').textContent = fmt(data.airTemp);
+                document.getElementById('humidity').textContent = fmt(data.humidity);
+                document.getElementById('enclosureTemp').textContent = fmt(data.enclosureTemp);
+
+                const onOff = v => v ? '✅ on' : '❌ off';
+                document.getElementById('UV1Status').textContent = onOff(data.uv1On);
+                document.getElementById('UV2Status').textContent = onOff(data.uv2On);
+                document.getElementById('heatStatus').textContent = onOff(data.heatOn);
+                document.getElementById('ledStatus').textContent = onOff(data.ledOn);
+                document.getElementById('heatBlock').textContent =
+                    data.heatBlock ? `(blocked: ${data.heatBlock.reason})` : '';
                 
             } catch (error) {
                 console.error('Error fetching current values:', error);

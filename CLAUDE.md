@@ -15,67 +15,69 @@ read it before making design changes and keep its roadmap checkboxes up to date.
 
 ## Current state
 
-The code **does not compile yet** (phase 0 done, phase 1 next). It was written module-by-module and never
-built as a whole. Known inconsistencies to resolve rather than work around:
+Phase 1 is done: the app builds without warnings and runs on Windows with simulated hardware
+(web UI on port 80). Still open:
 
-- Three DB approaches are mixed: `storage.rs`/`web.rs` use `sqlx::SqlitePool`, `getData.rs` uses
-  `PgPool`, `lightControl.rs`/`ledStrip.rs` use `rusqlite::Connection`. **Decision: sqlx + SQLite only.**
-- SQL in `lightControl.rs`/`ledStrip.rs` queries `week_start`/`week_end` and `led_start`/`led_end`,
-  which don't exist in the `schedule` table created in `storage.rs` (keyed by `week_number`).
-- Sensor functions (`read_ds18b20`, …), `History`, `ConfigError`, `config.thresholds` don't exist.
-- `web.rs` declares `mod handlers` twice and does not serve `static/` (that was only done by the
-  removed camera server).
-- `config.rs` field names differ from `config.toml` (`debug` vs `setup_mode`), and `Config::load`
-  takes a path but `main.rs` calls it without one.
-- `RelayController` (gpio.rs) and `LightController` both claim the same GPIO pins.
-- GPIO numbers in `config.toml` do not match the fabricated PCB — see the pin table in `readme.md`.
-- `static/api.js` calls `/api/current` and `/api/data/{date}`; the backend serves `/api/values`
-  and `/api/graph/*`.
+- `PiHardware` (Linux-only `cfg`) has never been compiled; WS2805 output and SHT3x are stubs (phase 2).
+- `static/api.js`, `schedule.html`, `data.html` still use the old API shape (phase 4). The current
+  API: `GET /api/values`, `/api/graph/{today,yesterday}`, `/api/data/download?start&end`,
+  `GET /api/schedule`, `GET|PUT|DELETE /api/schedule/{week}`, `/api/schedule/current`,
+  `/api/led/{status,power,color,natural,brightness,presets}`, `/api/system/status`, `/api/logs`,
+  `/api/logs/download`, `POST /api/relays/{uv1|uv2|heat}` (setup mode only).
+- UV re-strike pause is configured (`restrike_pause_secs`) but not enforced yet (phase 3).
 
 ## Commands
 
 ```bash
 cargo build                 # binary: terra-control (entry point main.rs, not src/)
-cargo test                  # no tests yet
+cargo test                  # so far: config.toml loads and validates
 cargo test <test_name>      # single test
 ```
 
 - The binary reads `config.toml` and creates `data.db`, `logs/`, `temp/` relative to the **working
   directory**, so run it from this folder.
-- `sqlx::query!`/`query_as!` macros check SQL at compile time and need `DATABASE_URL=sqlite:data.db`
-  (or offline data via `cargo sqlx prepare`).
-- `rppal` only works on the Pi. The plan (phase 1) is a hardware trait with a simulation backend so
-  the app builds and runs on Windows; the real build is cross-compiled for the Pi 3A+ in Docker
+- SQL uses runtime-checked `sqlx::query`/`query_as::<_, T>` (decided: no `query!` macros, so no
+  `DATABASE_URL` is needed). Schema changes go into a new file in `migrations/`; `sqlx::migrate!`
+  embeds them and they run on startup. Never edit an applied migration.
+- Run on the PC: `cargo run`, then open http://localhost/. `config.toml` has `simulate = true`.
+- `rppal` only works on the Pi; non-Linux builds always use `SimulatedHardware`. The real build is cross-compiled for the Pi 3A+ in Docker
   (phase 5, Dockerfile not written yet; `Dockerfile` is gitignored). Target is 64-bit Pi OS:
   `aarch64-unknown-linux-gnu`. `rppal` is already a Linux-only dependency in `Cargo.toml`.
 
 ## Architecture
 
-- **`main.rs`** builds shared state as `Arc<tokio::sync::Mutex<…>>` (relay, light and LED
-  controllers, `CurrentReadings`) plus `Arc<Config>` and the DB pool, then spawns long-running
-  tasks: sensor collection (`getData::start_data_collection`, interval from config), light update
-  loop (30 s), LED update loop (30 s) and the Axum web server (axum 0.8, `axum::serve`).
-  The camera code was deleted in phase 0.
-- **Data flow:** sensors → `CurrentReadings` (shared, read by the web API) → basking temperature is
-  pushed into `LightController::update_temperature` for overheat protection → readings are stored in SQLite.
+- **`main.rs`** loads `config.toml`, opens the DB (runs migrations), creates the hardware backend,
+  builds `state::AppState` (cloneable: config, pool, `SharedHardware`, `Mutex<LightController>`,
+  `Mutex<LedController>`, `RwLock<Option<Readings>>`) and spawns `getData::run`,
+  `lightControl::run`, `ledStrip::run` (30 s) plus the Axum server. On Ctrl+C/SIGTERM it switches
+  all outputs off.
+- **Hardware:** `gpio::Hardware` trait (blocking calls; use `spawn_blocking` for sensor reads),
+  shared as `SharedHardware` (`Arc<std::sync::Mutex<Box<dyn Hardware>>>`). Never hold that lock
+  across an `.await`. Lock order: tokio controller mutex first, then the hardware lock.
+- **Data flow:** `getData` reads sensors → `AppState.readings` → `LightController::update_temperature`
+  + immediate `apply` (overheat) → threshold warnings (logged on change) → `readings` table.
+- **Heat safety:** `LightController::heat_block` keeps the heat spot off with no reading yet, on
+  sensor failure / stale value (> 3 intervals), at/above `overheat_temp`, and during the cooldown.
+  Relay changes go through `lightControl::apply_and_log`; web handlers call the same functions.
 - **Schedule model:** one row per ISO calendar week (KW 1–53) with UV1/UV2/heat on/off times and LED
   on/off times + base colour. Only the LED colour is interpolated *within a day*
   (morning → noon → evening presets in `[led]` of `config.toml`, mixed with the weekly colour via
   `season_weight`). Defaults come from `[db]` in `config.toml` when no week row exists.
 - **Layering (decided):** all hardware access (relays, WS2805 strip, 1-Wire, I²C) lives in `gpio.rs`;
   `lightControl.rs`/`ledStrip.rs`/`getData.rs` contain logic only and call into it.
-- **Web (`web.rs`):** `AppState` holds the shared handles; handlers are inline submodules
-  (`handlers::{schedule, led, monitoring, system}`), routes are grouped per area under
-  `/api/...`, and `static/` is served as plain HTML/JS (no build step).
-- **Logging (`logs.rs`):** `logs::log` writes both to the `logs` DB table and to `logs/<date>.log`.
+- **Web (`web.rs`):** handlers are inline submodules (`handlers::{monitoring, schedule, led, system}`),
+  each with its own `routes()`; errors via `ApiError` (`From<anyhow::Error>`). `static/` is the
+  fallback service (plain HTML/JS, no build step).
+- **Logging (`logs.rs`):** `logs::log(pool, Level, msg)` writes to stdout, `logs/<date>.log` and the
+  `logs` table; it never fails the caller. Errors elsewhere use `anyhow`.
 
 ## Hardware constraints that affect code
 
 - Loads: UV1 = metal-halide lamp on an HID ballast, UV2 = T5 tube, Heat = 230 V halogen spot.
   **UV1/UV2 need ≥ 15 min re-strike pause after switching off**, and this must survive restarts.
 - Relays are active-high, 3 channels only (Q1/Q2/Q3 = GPIO25/24/23). The mapping to UV1/UV2/Heat
-  is unconfirmed → keep it configurable (default Q1/Q2/Q3 = UV1/UV2/Heat). An LED-PSU relay will
-  be retrofitted later → optional in config/code, pin still unknown.
+  is unconfirmed → configurable in `[relays]` (default Q1/Q2/Q3 = UV1/UV2/Heat). An LED-PSU relay
+  will be retrofitted later → optional `relays.led_psu`, pin still unknown.
 - Each LED strip has DI + BI (backup data): drive GPIO18 (strip 1) and GPIO13 (strip 2);
   GPIO17/19 are the BI lines. GPIO4 (`Display_On`) and J7 (W5500 Ethernet, SPI0) are unused in v1.
 - 1-Wire is on GPIO26 (DS18B20 ×2 in the enclosure + MAX31820 on the board, fixed IDs in config);
