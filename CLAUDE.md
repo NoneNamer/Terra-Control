@@ -21,11 +21,14 @@ Phase 1 is done: the app builds without warnings and runs on Windows with simula
 - Phase 2 drivers (`PiHardware`: rpi_ws281x for WS2805, SHT3x over rppal I²C, 1-Wire sysfs) build
   for aarch64 in Docker but are **untested on the Pi**. WS2805 channel order and data rate
   (`[led] channel_order`, `frequency_hz`) are guesses until verified on the strip.
-- `static/api.js`, `schedule.html`, `data.html` still use the old API shape (phase 4). The current
-  API: `GET /api/values`, `/api/graph/{today,yesterday}`, `/api/data/download?start&end`,
-  `GET /api/schedule`, `GET|PUT|DELETE /api/schedule/{week}`, `/api/schedule/current`,
+- API (phase 4 done, all pages use it via `static/api.js`): `GET /api/values`,
+  `/api/graph/{today,yesterday}`, `/api/graph/date/{YYYY-MM-DD}`, `/api/data/download?start&end`,
+  `GET /api/schedule` (all 53 weeks + default + current week), `GET|PUT|DELETE /api/schedule/{week}`,
+  `/api/schedule/current`, `POST /api/schedule/copy {weeks, schedule}`, `POST /api/schedule/reset {weeks}`,
   `/api/led/{status,power,color,natural,brightness,presets}`, `/api/system/status`, `/api/logs`,
-  `/api/logs/download`, `POST /api/relays/{uv1|uv2|heat}` (setup mode only).
+  `/api/logs/download`, `POST /api/relays/{uv1|uv2|heat}` (setup mode only). Unknown `/api/*` → JSON 404.
+- Handlers must use `ApiJson`/`ApiPath`/`ApiQuery` (not axum's `Json`/`Path`/`Query` extractors) so
+  malformed input also gets the `{"error": "..."}` body. `led.html` keeps its own inline fetches.
 - Phase 3 safety logic is done and unit tested (`lightControl.rs` tests use a `FakeHw`; time is
   passed in as `Instant`, so tests never sleep). Keep it that way: every safety rule needs a test.
 
@@ -79,7 +82,9 @@ cargo test <test_name>      # single test
   `lightControl.rs`/`ledStrip.rs`/`getData.rs` contain logic only and call into it.
 - **Web (`web.rs`):** handlers are inline submodules (`handlers::{monitoring, schedule, led, system}`),
   each with its own `routes()`; errors via `ApiError` (`From<anyhow::Error>`). `static/` is the
-  fallback service (plain HTML/JS, no build step).
+  fallback service (plain HTML/JS, no build step); every response carries `Cache-Control: no-cache`.
+  Validation lives in the model types (`ScheduleRow::to_week_schedule`, `WeekSchedule::validate`),
+  not in the handlers, so config defaults and API input follow the same rules. UI texts are English.
 - **Logging (`logs.rs`):** `logs::log(pool, Level, msg)` writes to stdout, `logs/<date>.log` and the
   `logs` table; it never fails the caller. Errors elsewhere use `anyhow`.
 

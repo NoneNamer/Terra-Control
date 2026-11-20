@@ -1,202 +1,85 @@
-const API_BASE_URL = '/api';
+// Shared helpers for all pages. Every API error has the body {"error": "..."}.
 
-class TerrariumAPI {
-    static async getCurrentReadings() {
-        const response = await fetch(`${API_BASE_URL}/current`);
-        return response.json();
-    }
-
-    static async getDailyData(date) {
-        const response = await fetch(`${API_BASE_URL}/data/${date}`);
-        return response.json();
-    }
-
-    static async getAllSchedules() {
-        const response = await fetch(`${API_BASE_URL}/schedule`);
-        return response.json();
-    }
-
-    static async updateSchedule(week, settings) {
-        const response = await fetch(`${API_BASE_URL}/schedule/${week}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(settings),
-        });
-        return response.ok;
-    }
-
-    // New methods for log and data functionality
-    static async getLogEntries(filter = 'all', limit = 50) {
-        const response = await fetch(`${API_BASE_URL}/logs?filter=${filter}&limit=${limit}`);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch logs: ${response.statusText}`);
+const API = {
+    async request(method, path, body) {
+        const options = { method, headers: {} };
+        if (body !== undefined) {
+            options.headers['Content-Type'] = 'application/json';
+            options.body = JSON.stringify(body);
         }
-        return response.json();
-    }
-    
-    static async downloadLogs() {
-        const response = await fetch(`${API_BASE_URL}/logs/download`);
-        if (!response.ok) {
-            throw new Error(`Failed to download logs: ${response.statusText}`);
-        }
-        
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        
-        // Get filename from Content-Disposition header or use default
-        const contentDisposition = response.headers.get('Content-Disposition');
-        let filename = 'terrarium_logs.zip';
-        if (contentDisposition) {
-            const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-            if (filenameMatch) {
-                filename = filenameMatch[1];
+        const response = await fetch(`/api${path}`, options);
+        let data = null;
+        const text = await response.text();
+        if (text) {
+            try {
+                data = JSON.parse(text);
+            } catch {
+                data = text;
             }
         }
-        
-        a.download = filename;
+        if (!response.ok) {
+            const message = (data && data.error) || response.statusText || `HTTP ${response.status}`;
+            throw new Error(message);
+        }
+        return data;
+    },
+
+    get: path => API.request('GET', path),
+    post: (path, body) => API.request('POST', path, body),
+    put: (path, body) => API.request('PUT', path, body),
+    del: path => API.request('DELETE', path),
+
+    /** Downloads a file from the API, using the server's file name if it sends one. */
+    async download(path, fallbackName) {
+        const response = await fetch(`/api${path}`);
+        if (!response.ok) {
+            let message = response.statusText;
+            try {
+                message = (await response.json()).error || message;
+            } catch { /* not JSON */ }
+            throw new Error(message);
+        }
+        const blob = await response.blob();
+        const match = (response.headers.get('Content-Disposition') || '').match(/filename="(.+)"/);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = match ? match[1] : fallbackName;
         document.body.appendChild(a);
         a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-    }
-    
-    static async downloadSensorData(startDate, endDate) {
-        const response = await fetch(`${API_BASE_URL}/data/download?start=${startDate}&end=${endDate}`);
-        if (!response.ok) {
-            throw new Error(`Failed to download sensor data: ${response.statusText}`);
-        }
-        
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        
-        // Get filename from Content-Disposition header or use default
-        const contentDisposition = response.headers.get('Content-Disposition');
-        let filename = `terrarium_data_${startDate}_to_${endDate}.csv`;
-        if (contentDisposition) {
-            const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-            if (filenameMatch) {
-                filename = filenameMatch[1];
-            }
-        }
-        
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        a.remove();
+    },
+};
+
+/** Formats a number with one decimal, or "--" for missing sensor values. */
+function fmt(value, digits = 1) {
+    return (value === null || value === undefined) ? '--' : Number(value).toFixed(digits);
+}
+
+/**
+ * Shows a short status message in `element` (kind: "ok" or "error").
+ * Success messages disappear after a few seconds.
+ */
+function showMessage(element, text, kind = 'ok') {
+    element.textContent = text;
+    element.className = `message ${kind}`;
+    clearTimeout(element._timer);
+    if (kind === 'ok') {
+        element._timer = setTimeout(() => { element.textContent = ''; element.className = 'message'; }, 4000);
     }
 }
 
-// index.js
-async function updateCurrentReadings() {
-    try {
-        const data = await TerrariumAPI.getCurrentReadings();
-        document.getElementById('baskingTemp').textContent = data.baskingTemp.toFixed(1);
-        document.getElementById('controlTemp').textContent = data.controlTemp.toFixed(1);
-        document.getElementById('coolZoneTemp').textContent = data.coolZoneTemp.toFixed(1);
-        document.getElementById('humidity').textContent = data.humidity.toFixed(1);
-        
-        // Update UV status with proper indicators
-        document.getElementById('UV1').textContent = `${data.uv1.value} UVI ${data.uv1.ok ? '✅' : '❌'}`;
-        document.getElementById('UV2').textContent = `${data.uv2.value} UVI ${data.uv2.ok ? '✅' : '❌'}`;
-    } catch (error) {
-        console.error('Failed to update readings:', error);
+/** Approximate screen colour of an RGBWW value (for previews only). */
+function previewColor({ r, g, b, ww, cw }) {
+    let red = r + ww * 0.8 + cw * 0.6;
+    let green = g + ww * 0.6 + cw * 0.7;
+    let blue = b + ww * 0.2 + cw * 0.9;
+    // Scale all channels together instead of clipping each, so the hue stays visible
+    const max = Math.max(red, green, blue);
+    if (max > 255) {
+        red = red * 255 / max;
+        green = green * 255 / max;
+        blue = blue * 255 / max;
     }
-}
-
-// Initialize charts
-async function initializeCharts() {
-    try {
-        const todayData = await TerrariumAPI.getDailyData(new Date().toISOString().split('T')[0]);
-        const yesterdayData = await TerrariumAPI.getDailyData(
-            new Date(Date.now() - 86400000).toISOString().split('T')[0]
-        );
-
-        createChart(document.getElementById('todayGraph').getContext('2d'), 
-                   todayData, 
-                   `Data for ${formatDate(new Date())}`);
-        
-        createChart(document.getElementById('yesterdayGraph').getContext('2d'), 
-                   yesterdayData, 
-                   `Data for ${formatDate(new Date(Date.now() - 86400000))}`);
-    } catch (error) {
-        console.error('Failed to initialize charts:', error);
-    }
-}
-
-// schedule.js
-async function loadScheduleData() {
-    try {
-        const schedules = await TerrariumAPI.getAllSchedules();
-        schedules.forEach(schedule => {
-            updateWeekForm(schedule.week, schedule);
-        });
-    } catch (error) {
-        console.error('Failed to load schedule data:', error);
-    }
-}
-
-function updateWeekForm(week, data) {
-    const weekPrefix = `week${week}`;
-    for (const [key, value] of Object.entries(data)) {
-        const element = document.getElementById(`${key}${week}`);
-        if (element) {
-            element.value = value;
-        }
-    }
-}
-
-// schedule form submission
-document.getElementById('weeklySettingsForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const updates = [];
-    
-    for (let week = 1; week <= 52; week++) {
-        updates.push({
-            week,
-            uv1_start: document.getElementById(`uv1Start${week}`).value,
-            uv1_end: document.getElementById(`uv1End${week}`).value,
-            uv2_start: document.getElementById(`uv2Start${week}`).value,
-            uv2_end: document.getElementById(`uv2End${week}`).value,
-            heat_start: document.getElementById(`heatStart${week}`).value,
-            heat_end: document.getElementById(`heatEnd${week}`).value,
-            led: {
-                red: parseInt(document.getElementById(`red${week}`).value),
-                green: parseInt(document.getElementById(`green${week}`).value),
-                blue: parseInt(document.getElementById(`blue${week}`).value),
-                cool_white: parseInt(document.getElementById(`cw${week}`).value),
-                warm_white: parseInt(document.getElementById(`ww${week}`).value),
-            }
-        });
-    }
-    
-    try {
-        for (const update of updates) {
-            await TerrariumAPI.updateSchedule(update.week, update);
-        }
-        alert('Schedule updated successfully');
-    } catch (error) {
-        alert('Failed to update schedule');
-        console.error(error);
-    }
-});
-
-// periodic updates for the dashboard
-if (window.location.pathname.endsWith('index.html')) {
-    updateCurrentReadings();
-    initializeCharts();
-    setInterval(updateCurrentReadings, 30000); // Update every 30 seconds
-}
-
-// Load schedule data on demand
-if (window.location.pathname.endsWith('schedule.html')) {
-    loadScheduleData();
+    return `rgb(${Math.round(red)}, ${Math.round(green)}, ${Math.round(blue)})`;
 }

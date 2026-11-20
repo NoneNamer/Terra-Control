@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TC - Weekly Settings</title>
+    <title>TC - Weekly Schedule</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,71 +15,237 @@
             <a href="data.html">Data</a>
             <a href="led.html">LED Control</a>
         </nav><hr>
-        <h2>Weekly Lighting Settings</h2>
-        <form id="weeklySettingsForm" method="POST" action="/schedule">
-            <div class="weeks-container">
-                <!-- Weekly settings will be dynamically populated -->
-            </div>
-            <input type="submit" value="Submit">
-        </form>
-    </div>
 
-    <script>
-        const weeksContainer = document.querySelector('.weeks-container');
-        for (let week = 1; week <= 52; week++) {
-            const weekHtml = `
-                <div class="week-row">
-                    <div class="week-settings">
-                        <h3>KW ${week}</h3>
-                        <div class="input-group">
-                            <label for="uv1Start${week}">UV1 Start Time:</label>
-                            <input type="time" id="uv1Start${week}" name="uv1Start${week}" value="06:00">
-                        </div>
-                        <div class="input-group">
-                            <label for="uv1End${week}">UV1 End Time:</label>
-                            <input type="time" id="uv1End${week}" name="uv1End${week}" value="18:00">
-                        </div>
-                        <div class="input-group">
-                            <label for="uv2Start${week}">UV2 Start Time:</label>
-                            <input type="time" id="uv2Start${week}" name="uv2Start${week}" value="08:00">
-                        </div>
-                        <div class="input-group">
-                            <label for="uv2End${week}">UV2 End Time:</label>
-                            <input type="time" id="uv2End${week}" name="uv2End${week}" value="20:00">
-                        </div>
-                        <div class="input-group">
-                            <label for="heatStart${week}">Heat Start Time:</label>
-                            <input type="time" id="heatStart${week}" name="heatStart${week}" value="08:00">
-                        </div>
-                        <div class="input-group">
-                            <label for="heatEnd${week}">Heat End Time:</label>
-                            <input type="time" id="heatEnd${week}" name="heatEnd${week}" value="20:00">
-                        </div>
-                        <div class="input-group">
-                            <label for="red${week}">Red:</label>
-                            <input type="number" id="red${week}" name="red${week}" min="0" max="255" value="255">
-                        </div>
-                        <div class="input-group">
-                            <label for="green${week}">Green:</label>
-                            <input type="number" id="green${week}" name="green${week}" min="0" max="255" value="200">
-                        </div>
-                        <div class="input-group">
-                            <label for="blue${week}">Blue:</label>
-                            <input type="number" id="blue${week}" name="blue${week}" min="0" max="255" value="100">
-                        </div>
-                        <div class="input-group">
-                            <label for="cw${week}">Cool White:</label>
-                            <input type="number" id="cw${week}" name="cw${week}" min="0" max="255" value="150">
-                        </div>
-                        <div class="input-group">
-                            <label for="ww${week}">Warm White:</label>
-                            <input type="number" id="ww${week}" name="ww${week}" min="0" max="255" value="200">
-                        </div>
+        <h2>Weekly Schedule</h2>
+        <p class="hint">One entry per calendar week (KW 1&ndash;53). Weeks without their own entry use the
+            default from <code>config.toml</code>. Untick a load to keep it off for the whole week (e.g. brumation).
+            UV and heat must not run over midnight.</p>
+
+        <section class="editor" id="editor">
+            <h3>KW <span id="editWeek">--</span> <span id="editSource" class="badge"></span></h3>
+            <form id="weekForm">
+                <div class="editor-grid">
+                    <div class="load" data-load="uv1">
+                        <label><input type="checkbox" class="enabled"> UV1</label>
+                        <input type="time" class="on" aria-label="UV1 on"> &ndash; <input type="time" class="off" aria-label="UV1 off">
+                    </div>
+                    <div class="load" data-load="uv2">
+                        <label><input type="checkbox" class="enabled"> UV2</label>
+                        <input type="time" class="on" aria-label="UV2 on"> &ndash; <input type="time" class="off" aria-label="UV2 off">
+                    </div>
+                    <div class="load" data-load="heat">
+                        <label><input type="checkbox" class="enabled"> Heat</label>
+                        <input type="time" class="on" aria-label="Heat on"> &ndash; <input type="time" class="off" aria-label="Heat off">
+                    </div>
+                    <div class="load" data-load="led">
+                        <label><input type="checkbox" class="enabled"> LED</label>
+                        <input type="time" class="on" aria-label="LED on"> &ndash; <input type="time" class="off" aria-label="LED off">
                     </div>
                 </div>
-            `;
-            weeksContainer.insertAdjacentHTML('beforeend', weekHtml);
+                <div class="color-row">
+                    <span>LED base colour:</span>
+                    <label>R <input type="number" id="led_r" min="0" max="255" required></label>
+                    <label>G <input type="number" id="led_g" min="0" max="255" required></label>
+                    <label>B <input type="number" id="led_b" min="0" max="255" required></label>
+                    <label>WW <input type="number" id="led_ww" min="0" max="255" required></label>
+                    <label>CW <input type="number" id="led_cw" min="0" max="255" required></label>
+                    <span class="swatch" id="colorSwatch"></span>
+                </div>
+                <div class="button-row">
+                    <button type="submit" class="btn">Save week</button>
+                    <button type="button" class="btn secondary" id="resetWeek">Reset to default</button>
+                </div>
+                <div class="button-row">
+                    <span>Apply this setting to KW</span>
+                    <input type="number" id="copyFrom" min="1" max="53" aria-label="from week">
+                    <span>to</span>
+                    <input type="number" id="copyTo" min="1" max="53" aria-label="to week">
+                    <button type="button" class="btn secondary" id="copyWeeks">Apply to weeks</button>
+                    <button type="button" class="btn secondary" id="resetWeeks">Reset weeks to default</button>
+                </div>
+                <p id="message" class="message"></p>
+            </form>
+        </section>
+
+        <div class="table-wrapper">
+            <table class="schedule-table">
+                <thead>
+                    <tr><th>KW</th><th>UV1</th><th>UV2</th><th>Heat</th><th>LED</th><th>Colour</th><th>Source</th></tr>
+                </thead>
+                <tbody id="weeks"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="api.js"></script>
+    <script>
+        const LOADS = ['uv1', 'uv2', 'heat', 'led'];
+        const CHANNELS = ['led_r', 'led_g', 'led_b', 'led_ww', 'led_cw'];
+        const message = document.getElementById('message');
+        let overview = null;
+        let selectedWeek = null;
+
+        const windowText = (on, off) => on ? `${on}–${off}` : 'off';
+        const colorOf = row => ({ r: row.led_r, g: row.led_g, b: row.led_b, ww: row.led_ww, cw: row.led_cw });
+
+        function renderTable() {
+            const tbody = document.getElementById('weeks');
+            tbody.innerHTML = '';
+            for (const week of overview.weeks) {
+                const tr = document.createElement('tr');
+                tr.dataset.week = week.week;
+                if (week.week === overview.current_week) tr.classList.add('current');
+                if (week.week === selectedWeek) tr.classList.add('selected');
+                const cells = [
+                    week.week + (week.week === overview.current_week ? ' (now)' : ''),
+                    windowText(week.uv1_on, week.uv1_off),
+                    windowText(week.uv2_on, week.uv2_off),
+                    windowText(week.heat_on, week.heat_off),
+                    windowText(week.led_on, week.led_off),
+                    null,
+                    week.source === 'database' ? 'own' : 'default',
+                ];
+                cells.forEach((text, i) => {
+                    const td = document.createElement('td');
+                    if (i === 5) {
+                        const sw = document.createElement('span');
+                        sw.className = 'swatch small';
+                        sw.style.backgroundColor = previewColor(colorOf(week));
+                        sw.title = CHANNELS.map(c => week[c]).join(', ');
+                        td.appendChild(sw);
+                    } else {
+                        td.textContent = text;
+                    }
+                    if (i === 6 && week.source === 'default') td.classList.add('muted');
+                    tr.appendChild(td);
+                });
+                tr.addEventListener('click', () => selectWeek(week.week));
+                tbody.appendChild(tr);
+            }
         }
+
+        function fillForm(row, source) {
+            document.getElementById('editWeek').textContent = row.week;
+            const badge = document.getElementById('editSource');
+            badge.textContent = source === 'database' ? 'own entry' : 'default';
+            badge.className = `badge ${source === 'database' ? 'own' : ''}`;
+            for (const load of LOADS) {
+                const box = document.querySelector(`.load[data-load="${load}"]`);
+                const on = row[`${load}_on`];
+                box.querySelector('.enabled').checked = !!on;
+                // Keep the default times in the fields when a load is off, so ticking it is easy
+                box.querySelector('.on').value = on || overview.default[`${load}_on`] || '08:00';
+                box.querySelector('.off').value = row[`${load}_off`] || overview.default[`${load}_off`] || '18:00';
+                updateLoadState(box);
+            }
+            for (const c of CHANNELS) document.getElementById(c).value = row[c];
+            updateSwatch();
+        }
+
+        function updateLoadState(box) {
+            const enabled = box.querySelector('.enabled').checked;
+            box.querySelectorAll('input[type=time]').forEach(i => { i.disabled = !enabled; i.required = enabled; });
+            box.classList.toggle('disabled', !enabled);
+        }
+
+        function updateSwatch() {
+            const c = {};
+            ['r', 'g', 'b', 'ww', 'cw'].forEach((k, i) => c[k] = parseInt(document.getElementById(CHANNELS[i]).value) || 0);
+            document.getElementById('colorSwatch').style.backgroundColor = previewColor(c);
+        }
+
+        function formToRow() {
+            const row = {};
+            for (const load of LOADS) {
+                const box = document.querySelector(`.load[data-load="${load}"]`);
+                const enabled = box.querySelector('.enabled').checked;
+                row[`${load}_on`] = enabled ? box.querySelector('.on').value : null;
+                row[`${load}_off`] = enabled ? box.querySelector('.off').value : null;
+            }
+            for (const c of CHANNELS) row[c] = parseInt(document.getElementById(c).value);
+            return row;
+        }
+
+        function selectWeek(week) {
+            selectedWeek = week;
+            const entry = overview.weeks.find(w => w.week === week);
+            fillForm(entry, entry.source);
+            document.getElementById('copyFrom').value = week;
+            document.getElementById('copyTo').value = week;
+            renderTable();
+        }
+
+        async function load(keepSelection = true) {
+            try {
+                overview = await API.get('/schedule');
+                const week = keepSelection && selectedWeek ? selectedWeek : overview.current_week;
+                selectWeek(week);
+            } catch (e) {
+                showMessage(message, `Failed to load schedule: ${e.message}`, 'error');
+            }
+        }
+
+        function weekRange() {
+            const from = parseInt(document.getElementById('copyFrom').value);
+            const to = parseInt(document.getElementById('copyTo').value);
+            if (!(from >= 1 && to <= 53 && from <= to)) {
+                throw new Error('Enter a week range between 1 and 53 (from <= to)');
+            }
+            return Array.from({ length: to - from + 1 }, (_, i) => from + i);
+        }
+
+        document.querySelectorAll('.load .enabled').forEach(cb =>
+            cb.addEventListener('change', () => updateLoadState(cb.closest('.load'))));
+        CHANNELS.forEach(c => document.getElementById(c).addEventListener('input', updateSwatch));
+
+        document.getElementById('weekForm').addEventListener('submit', async e => {
+            e.preventDefault();
+            try {
+                await API.put(`/schedule/${selectedWeek}`, formToRow());
+                await load();
+                showMessage(message, `KW ${selectedWeek} saved`);
+            } catch (err) {
+                showMessage(message, `Not saved: ${err.message}`, 'error');
+            }
+        });
+
+        document.getElementById('resetWeek').addEventListener('click', async () => {
+            try {
+                await API.del(`/schedule/${selectedWeek}`);
+                await load();
+                showMessage(message, `KW ${selectedWeek} uses the default again`);
+            } catch (err) {
+                showMessage(message, `Reset failed: ${err.message}`, 'error');
+            }
+        });
+
+        document.getElementById('copyWeeks').addEventListener('click', async () => {
+            const form = document.getElementById('weekForm');
+            if (!form.reportValidity()) return;
+            try {
+                const weeks = weekRange();
+                if (weeks.length > 1 && !confirm(`Overwrite KW ${weeks[0]}–${weeks[weeks.length - 1]} with this setting?`)) return;
+                await API.post('/schedule/copy', { weeks, schedule: formToRow() });
+                await load();
+                showMessage(message, `Saved for ${weeks.length} week(s)`);
+            } catch (err) {
+                showMessage(message, `Not saved: ${err.message}`, 'error');
+            }
+        });
+
+        document.getElementById('resetWeeks').addEventListener('click', async () => {
+            try {
+                const weeks = weekRange();
+                if (!confirm(`Reset KW ${weeks[0]}–${weeks[weeks.length - 1]} to the default?`)) return;
+                const removed = await API.post('/schedule/reset', { weeks });
+                await load();
+                showMessage(message, `${removed} week(s) reset to the default`);
+            } catch (err) {
+                showMessage(message, `Reset failed: ${err.message}`, 'error');
+            }
+        });
+
+        load(false);
     </script>
 </body>
 </html>

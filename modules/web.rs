@@ -6,7 +6,9 @@ use axum::{
     response::{IntoResponse, Response},
     Json, Router,
 };
+use axum::http::header;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 // ===== Errors =====
 
@@ -38,6 +40,65 @@ impl From<anyhow::Error> for ApiError {
 
 pub type ApiResult<T> = Result<Json<T>, ApiError>;
 
+// ===== Extractors with JSON errors =====
+// axum's own extractors answer malformed input with plain text; these wrappers turn every
+// rejection into the same `{"error": "..."}` body as all other API errors (HTTP 400).
+
+pub struct ApiJson<T>(pub T);
+
+impl<S, T> axum::extract::FromRequest<S> for ApiJson<T>
+where
+    Json<T>: axum::extract::FromRequest<S, Rejection = axum::extract::rejection::JsonRejection>,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, ApiError> {
+        Json::<T>::from_request(req, state)
+            .await
+            .map(|Json(v)| ApiJson(v))
+            .map_err(|e| ApiError::BadRequest(e.body_text()))
+    }
+}
+
+pub struct ApiPath<T>(pub T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for ApiPath<T>
+where
+    T: serde::de::DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut axum::http::request::Parts, state: &S) -> Result<Self, ApiError> {
+        axum::extract::Path::<T>::from_request_parts(parts, state)
+            .await
+            .map(|axum::extract::Path(v)| ApiPath(v))
+            .map_err(|e| ApiError::BadRequest(e.body_text()))
+    }
+}
+
+pub struct ApiQuery<T>(pub T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for ApiQuery<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut axum::http::request::Parts, state: &S) -> Result<Self, ApiError> {
+        axum::extract::Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|axum::extract::Query(v)| ApiQuery(v))
+            .map_err(|e| ApiError::BadRequest(e.body_text()))
+    }
+}
+
+async fn api_not_found(uri: axum::http::Uri) -> ApiError {
+    ApiError::NotFound(format!("unknown API route {}", uri.path()))
+}
+
 /// Builds the router: `/api/...` routes plus the static web interface as fallback.
 pub fn router(state: AppState) -> Router {
     let static_files = ServeDir::new(&state.config.web.static_dir).append_index_html_on_directories(true);
@@ -46,7 +107,14 @@ pub fn router(state: AppState) -> Router {
         .merge(handlers::schedule::routes())
         .merge(handlers::led::routes())
         .merge(handlers::system::routes())
+        .route("/api/{*rest}", axum::routing::any(api_not_found))
         .fallback_service(static_files)
+        // Browsers must revalidate (cheap 304 via Last-Modified), otherwise they keep old
+        // HTML/JS/CSS after an update and API values may come from the cache
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("no-cache"),
+        ))
         .with_state(state)
 }
 
@@ -59,7 +127,7 @@ mod handlers {
         use crate::modules::lightControl::{HeatBlock, RestrikeStatus};
         use crate::modules::logs;
         use crate::modules::storage;
-        use axum::{extract::{Query, State}, http::header, routing::get};
+        use axum::{extract::State, http::header, routing::get};
         use chrono::{Local, NaiveDate};
         use serde::{Deserialize, Serialize};
         use std::time::Instant;
@@ -69,6 +137,7 @@ mod handlers {
                 .route("/api/values", get(current_values))
                 .route("/api/graph/today", get(graph_today))
                 .route("/api/graph/yesterday", get(graph_yesterday))
+                .route("/api/graph/date/{date}", get(graph_date))
                 .route("/api/data/download", get(download_data))
         }
 
@@ -154,6 +223,16 @@ mod handlers {
             graph_for(&state, yesterday).await
         }
 
+        fn parse_date(s: &str) -> Result<NaiveDate, ApiError> {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|_| ApiError::BadRequest(format!("invalid date '{s}', expected YYYY-MM-DD")))
+        }
+
+        /// Readings of one day (YYYY-MM-DD).
+        async fn graph_date(State(state): State<AppState>, ApiPath(date): ApiPath<String>) -> ApiResult<Vec<GraphPoint>> {
+            graph_for(&state, parse_date(&date)?).await
+        }
+
         #[derive(Deserialize)]
         pub struct DateRange {
             start: String,
@@ -162,15 +241,14 @@ mod handlers {
 
         async fn download_data(
             State(state): State<AppState>,
-            Query(range): Query<DateRange>,
+            ApiQuery(range): ApiQuery<DateRange>,
         ) -> Result<Response, ApiError> {
-            let parse = |s: &str| {
-                NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .map_err(|_| ApiError::BadRequest(format!("invalid date '{s}', expected YYYY-MM-DD")))
-            };
-            let (start, end) = (parse(&range.start)?, parse(&range.end)?);
+            let (start, end) = (parse_date(&range.start)?, parse_date(&range.end)?);
             if end < start {
                 return Err(ApiError::BadRequest("end date is before start date".into()));
+            }
+            if (end - start).num_days() > 366 {
+                return Err(ApiError::BadRequest("at most one year per download".into()));
             }
             let rows = storage::get_readings(&state.pool, start, end).await?;
             let filename = format!("terrarium_data_{start}_to_{end}.csv");
@@ -190,14 +268,16 @@ mod handlers {
         use crate::modules::lightControl;
         use crate::modules::models::ScheduleRow;
         use crate::modules::storage;
-        use axum::{extract::{Path, State}, routing::get};
+        use axum::{extract::State, routing::{get, post}};
         use chrono::{Datelike, Local};
-        use serde::Serialize;
+        use serde::{Deserialize, Serialize};
 
         pub fn routes() -> Router<AppState> {
             Router::new()
                 .route("/api/schedule", get(get_all))
                 .route("/api/schedule/current", get(get_current))
+                .route("/api/schedule/copy", post(copy_weeks))
+                .route("/api/schedule/reset", post(reset_weeks))
                 .route("/api/schedule/{week}", get(get_week).put(put_week).delete(delete_week))
         }
 
@@ -209,9 +289,51 @@ mod handlers {
             }
         }
 
-        /// All weeks that have their own row (weeks without a row use the default).
-        async fn get_all(State(state): State<AppState>) -> ApiResult<Vec<ScheduleRow>> {
-            Ok(Json(storage::get_schedule(&state.pool).await?))
+        fn check_weeks(weeks: &[i64]) -> Result<(), ApiError> {
+            if weeks.is_empty() {
+                return Err(ApiError::BadRequest("no weeks given".into()));
+            }
+            weeks.iter().try_for_each(|w| check_week(*w))
+        }
+
+        /// Validates a row and returns it in normalised form ("HH:MM", empty -> NULL).
+        fn normalise(week: i64, row: &ScheduleRow) -> Result<ScheduleRow, ApiError> {
+            let mut row = row.clone();
+            row.week = week;
+            let schedule = row.to_week_schedule().map_err(ApiError::BadRequest)?;
+            Ok(ScheduleRow::from_week_schedule(week, &schedule))
+        }
+
+        /// Applies schedule changes to the lamps and LEDs right away.
+        async fn apply_now(state: &AppState) -> Result<(), ApiError> {
+            lightControl::update_lights(state).await?;
+            crate::modules::ledStrip::update_leds(state).await?;
+            Ok(())
+        }
+
+        #[derive(Serialize)]
+        pub struct ScheduleOverview {
+            current_week: u32,
+            /// Schedule used for weeks without their own row ([schedule_default] in config.toml)
+            default: ScheduleRow,
+            /// Weeks 1-53, each either from the database or the default
+            weeks: Vec<WeekResponse>,
+        }
+
+        async fn get_all(State(state): State<AppState>) -> ApiResult<ScheduleOverview> {
+            let rows = storage::get_schedule(&state.pool).await?;
+            let default = state.config.default_schedule();
+            let weeks = (1..=53)
+                .map(|week| match rows.iter().find(|r| r.week == week) {
+                    Some(row) => WeekResponse { source: "database", schedule: row.clone() },
+                    None => WeekResponse { source: "default", schedule: ScheduleRow::from_week_schedule(week, &default) },
+                })
+                .collect();
+            Ok(Json(ScheduleOverview {
+                current_week: Local::now().iso_week().week(),
+                default: ScheduleRow::from_week_schedule(0, &default),
+                weeks,
+            }))
         }
 
         #[derive(Serialize)]
@@ -233,7 +355,7 @@ mod handlers {
             })
         }
 
-        async fn get_week(State(state): State<AppState>, Path(week): Path<i64>) -> ApiResult<WeekResponse> {
+        async fn get_week(State(state): State<AppState>, ApiPath(week): ApiPath<i64>) -> ApiResult<WeekResponse> {
             Ok(Json(week_response(&state, week).await?))
         }
 
@@ -244,26 +366,54 @@ mod handlers {
 
         async fn put_week(
             State(state): State<AppState>,
-            Path(week): Path<i64>,
-            Json(mut row): Json<ScheduleRow>,
+            ApiPath(week): ApiPath<i64>,
+            ApiJson(row): ApiJson<ScheduleRow>,
         ) -> ApiResult<ScheduleRow> {
             check_week(week)?;
-            row.week = week;
-            // Validate and store in normalised form ("HH:MM", empty -> NULL)
-            let schedule = row.to_week_schedule().map_err(ApiError::BadRequest)?;
-            let row = ScheduleRow::from_week_schedule(week, &schedule);
+            let row = normalise(week, &row)?;
             storage::upsert_schedule_week(&state.pool, &row).await?;
-            lightControl::update_lights(&state).await?;
-            crate::modules::ledStrip::update_leds(&state).await?;
+            apply_now(&state).await?;
             Ok(Json(row))
         }
 
-        async fn delete_week(State(state): State<AppState>, Path(week): Path<i64>) -> ApiResult<WeekResponse> {
+        async fn delete_week(State(state): State<AppState>, ApiPath(week): ApiPath<i64>) -> ApiResult<WeekResponse> {
             check_week(week)?;
             storage::delete_schedule_week(&state.pool, week).await?;
-            lightControl::update_lights(&state).await?;
-            crate::modules::ledStrip::update_leds(&state).await?;
+            apply_now(&state).await?;
             Ok(Json(week_response(&state, week).await?))
+        }
+
+        #[derive(Deserialize)]
+        pub struct CopyRequest {
+            weeks: Vec<i64>,
+            schedule: ScheduleRow,
+        }
+
+        /// Stores the same schedule for several weeks (validated once, all or nothing).
+        async fn copy_weeks(State(state): State<AppState>, ApiJson(req): ApiJson<CopyRequest>) -> ApiResult<usize> {
+            check_weeks(&req.weeks)?;
+            let rows = req.weeks.iter().map(|w| normalise(*w, &req.schedule)).collect::<Result<Vec<_>, _>>()?;
+            for row in &rows {
+                storage::upsert_schedule_week(&state.pool, row).await?;
+            }
+            apply_now(&state).await?;
+            Ok(Json(rows.len()))
+        }
+
+        #[derive(Deserialize)]
+        pub struct ResetRequest {
+            weeks: Vec<i64>,
+        }
+
+        /// Removes the own rows of several weeks so they use the default again.
+        async fn reset_weeks(State(state): State<AppState>, ApiJson(req): ApiJson<ResetRequest>) -> ApiResult<usize> {
+            check_weeks(&req.weeks)?;
+            let mut removed = 0;
+            for week in &req.weeks {
+                removed += storage::delete_schedule_week(&state.pool, *week).await? as usize;
+            }
+            apply_now(&state).await?;
+            Ok(Json(removed))
         }
     }
 
@@ -338,11 +488,11 @@ mod handlers {
             power: bool,
         }
 
-        async fn set_power(State(state): State<AppState>, Json(req): Json<PowerRequest>) -> ApiResult<&'static str> {
+        async fn set_power(State(state): State<AppState>, ApiJson(req): ApiJson<PowerRequest>) -> ApiResult<&'static str> {
             change(&state, |s| s.enabled = req.power).await
         }
 
-        async fn set_color(State(state): State<AppState>, Json(color): Json<Rgbww>) -> ApiResult<&'static str> {
+        async fn set_color(State(state): State<AppState>, ApiJson(color): ApiJson<Rgbww>) -> ApiResult<&'static str> {
             change(&state, |s| s.manual_color = color).await
         }
 
@@ -353,7 +503,7 @@ mod handlers {
             season_weight: f32,
         }
 
-        async fn set_natural(State(state): State<AppState>, Json(req): Json<NaturalRequest>) -> ApiResult<&'static str> {
+        async fn set_natural(State(state): State<AppState>, ApiJson(req): ApiJson<NaturalRequest>) -> ApiResult<&'static str> {
             if !(0.0..=1.0).contains(&req.season_weight) {
                 return Err(ApiError::BadRequest("season_weight must be 0.0-1.0".into()));
             }
@@ -371,7 +521,7 @@ mod handlers {
 
         async fn set_brightness(
             State(state): State<AppState>,
-            Json(req): Json<BrightnessRequest>,
+            ApiJson(req): ApiJson<BrightnessRequest>,
         ) -> ApiResult<&'static str> {
             if req.brightness > 100 {
                 return Err(ApiError::BadRequest("brightness must be 0-100".into()));
@@ -413,7 +563,7 @@ mod handlers {
             Json(state.led.lock().await.presets().into())
         }
 
-        async fn set_presets(State(state): State<AppState>, Json(dto): Json<PresetsDto>) -> ApiResult<&'static str> {
+        async fn set_presets(State(state): State<AppState>, ApiJson(dto): ApiJson<PresetsDto>) -> ApiResult<&'static str> {
             let presets: LedPresets = dto.into();
             storage::save_led_presets(&state.pool, &presets).await?;
             state.led.lock().await.set_presets(presets);
@@ -427,7 +577,7 @@ mod handlers {
         use crate::modules::lightControl::{self, HeatBlock, LampStates, RestrikeStatus};
         use crate::modules::logs::{self, Level};
         use axum::{
-            extract::{Path, Query, State},
+            extract::State,
             http::header,
             routing::{get, post},
         };
@@ -481,7 +631,7 @@ mod handlers {
             limit: Option<i64>,
         }
 
-        async fn get_logs(State(state): State<AppState>, Query(q): Query<LogQuery>) -> ApiResult<Vec<logs::LogEntry>> {
+        async fn get_logs(State(state): State<AppState>, ApiQuery(q): ApiQuery<LogQuery>) -> ApiResult<Vec<logs::LogEntry>> {
             let filter = q.filter.as_deref().and_then(Level::parse_filter);
             Ok(Json(logs::get_log_entries(&state.pool, filter, q.limit.unwrap_or(50)).await?))
         }
@@ -507,8 +657,8 @@ mod handlers {
         /// Manual lamp switching, only in setup mode. Overheat protection still applies to heat.
         async fn set_relay(
             State(state): State<AppState>,
-            Path(relay): Path<String>,
-            Json(req): Json<RelayRequest>,
+            ApiPath(relay): ApiPath<String>,
+            ApiJson(req): ApiJson<RelayRequest>,
         ) -> ApiResult<LampStates> {
             if !state.config.main.setup_mode {
                 return Err(ApiError::Conflict("manual switching is only allowed in setup mode".into()));

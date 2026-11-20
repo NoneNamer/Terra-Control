@@ -145,13 +145,15 @@ impl ScheduleDefault {
         let w = |name, on: &Option<String>, off: &Option<String>| {
             TimeWindow::parse_pair(name, on.as_deref(), off.as_deref())
         };
-        Ok(WeekSchedule {
+        let schedule = WeekSchedule {
             uv1: w("uv1", &self.uv1_on, &self.uv1_off)?,
             uv2: w("uv2", &self.uv2_on, &self.uv2_off)?,
             heat: w("heat", &self.heat_on, &self.heat_off)?,
             led: w("led", &self.led_on, &self.led_off)?,
             led_color: self.led_color,
-        })
+        };
+        schedule.validate()?;
+        Ok(schedule)
     }
 }
 

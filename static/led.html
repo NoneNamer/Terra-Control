@@ -51,6 +51,14 @@
                 </div>
                 <input type='submit' value='Apply Manual Settings'>
             </form>
+            <div class="control-group">
+                <label for="brightness">Brightness:</label>
+                <input type='range' id="brightness" min='0' max='100' step='5' value='50'>
+                <span id="brightnessValue">50</span>&nbsp;%
+                <p class="setting-description">Applies to both the natural light cycle and the manual colour.</p>
+            </div>
+            <p class="hint">Currently sent to the strips: <span class="swatch small" id="outputSwatch"></span> <span id="outputText">--</span></p>
+            <p id="ledMessage" class="message"></p>
         </div><hr>
 
         <div class="led-control-section">
@@ -150,6 +158,7 @@
                 <input type="range" id="timeSlider" min="0" max="24" step="0.5" value="12">
                 <span id="timeValue">12:00</span>
             </div>
+            <p class="hint" id="cycleInfo"></p>
             <div id="cycleLightPreview" class="light-preview"></div>
             <div class="cycle-preview-container">
                 <div class="cycle-preview-time">
@@ -168,7 +177,7 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="api.js"></script>
     <script>
         // Fetch current LED status
         async function fetchLEDStatus() {
@@ -189,6 +198,12 @@
                 document.getElementById('wwhite').value = data.ww;
                 document.getElementById('cwhite').value = data.cw;
                 document.getElementById('seasonWeight').value = data.season_weight;
+                document.getElementById('brightness').value = data.brightness;
+                document.getElementById('brightnessValue').textContent = data.brightness;
+                document.getElementById('outputSwatch').style.backgroundColor = previewColor(data.output);
+                const o = data.output;
+                document.getElementById('outputText').textContent =
+                    (o.r || o.g || o.b || o.ww || o.cw) ? `R ${o.r} G ${o.g} B ${o.b} WW ${o.ww} CW ${o.cw}` : 'off';
                 
                 // Update value displays
                 document.getElementById('redValue').textContent = data.r;
@@ -371,9 +386,23 @@
             });
         });
 
+        document.getElementById('brightness').addEventListener('input', function() {
+            document.getElementById('brightnessValue').textContent = this.value;
+        });
+        document.getElementById('brightness').addEventListener('change', async function() {
+            const msg = document.getElementById('ledMessage');
+            try {
+                await API.post('/led/brightness', { brightness: parseInt(this.value) });
+                showMessage(msg, `Brightness set to ${this.value} %`);
+                fetchLEDStatus();
+            } catch (e) {
+                showMessage(msg, e.message, 'error');
+            }
+        });
+
         // Add override switch event listener
         document.getElementById('override').addEventListener('change', function() {
-            setNaturalLightSettings(!this.checked, parseFloat(document.getElementById('seasonWeight').value));
+            setNaturalLightSettings(this.checked, parseFloat(document.getElementById('seasonWeight').value));
         });
 
         // Add power switch event listener
@@ -386,7 +415,7 @@
             e.preventDefault();
             
             // Update override status
-            setNaturalLightSettings(!document.getElementById('override').checked, 
+            setNaturalLightSettings(document.getElementById('override').checked, 
                                    parseFloat(document.getElementById('seasonWeight').value));
             
             // Update LED settings
@@ -404,7 +433,7 @@
             e.preventDefault();
             
             // Update natural light settings
-            setNaturalLightSettings(!document.getElementById('override').checked, 
+            setNaturalLightSettings(document.getElementById('override').checked, 
                                    parseFloat(document.getElementById('seasonWeight').value));
             
             // Save the natural light presets
@@ -555,15 +584,25 @@
             updatePresetPreview('noonPreview', noon.r, noon.g, noon.b, noon.ww, noon.cw);
             updatePresetPreview('eveningPreview', evening.r, evening.g, evening.b, evening.ww, evening.cw);
             
-            // Define the time ranges
-            const morningTime = 7; // 7:00 AM
-            const noonTime = 12;   // 12:00 PM
-            const eveningTime = 19; // 7:00 PM
-            
+            // Same curve as the controller: morning at LED on, noon halfway, evening at LED off
+            if (!ledWindow) {
+                updateLightPreviewElement('cycleLightPreview', 0, 0, 0, 0, 0);
+                document.getElementById('cycleInfo').textContent = 'No LED window this week (LEDs off).';
+                return;
+            }
+            const morningTime = ledWindow.on;
+            const eveningTime = ledWindow.off;
+            const noonTime = (morningTime + eveningTime) / 2;
+            document.getElementById('cycleInfo').textContent =
+                `LED window this week: ${ledWindow.onText}–${ledWindow.offText}, mixed with the weekly base colour by the season influence.`;
+
             let r, g, b, ww, cw;
-            
+
             // Interpolate between presets based on time
-            if (timeValue >= morningTime && timeValue < noonTime) {
+            if (timeValue < morningTime || timeValue >= eveningTime) {
+                updateLightPreviewElement('cycleLightPreview', 0, 0, 0, 0, 0);
+                return;
+            } else if (timeValue >= morningTime && timeValue < noonTime) {
                 // Morning to noon transition
                 const factor = (timeValue - morningTime) / (noonTime - morningTime);
                 r = interpolate(morning.r, noon.r, factor);
@@ -579,15 +618,16 @@
                 b = interpolate(noon.b, evening.b, factor);
                 ww = interpolate(noon.ww, evening.ww, factor);
                 cw = interpolate(noon.cw, evening.cw, factor);
-            } else {
-                // Evening or early morning - use evening preset
-                r = evening.r;
-                g = evening.g;
-                b = evening.b;
-                ww = evening.ww;
-                cw = evening.cw;
             }
-            
+
+            // Mix in the weekly base colour like the controller does
+            const w = parseFloat(document.getElementById('seasonWeight').value);
+            r = interpolate(r, weeklyColor.r, w);
+            g = interpolate(g, weeklyColor.g, w);
+            b = interpolate(b, weeklyColor.b, w);
+            ww = interpolate(ww, weeklyColor.ww, w);
+            cw = interpolate(cw, weeklyColor.cw, w);
+
             // Update the preview
             updateLightPreviewElement('cycleLightPreview', r, g, b, ww, cw);
         }
@@ -627,6 +667,21 @@
         function updateLightPreview(r, g, b, ww, cw) {
             updateLightPreviewElement('lightPreview', r, g, b, ww, cw);
         }
+
+        // LED window and base colour of the current week (for the cycle preview)
+        let ledWindow = null;
+        let weeklyColor = { r: 0, g: 0, b: 0, ww: 0, cw: 0 };
+        const hours = t => { const [h, m] = t.split(':').map(Number); return h + m / 60; };
+        API.get('/schedule/current').then(week => {
+            weeklyColor = { r: week.led_r, g: week.led_g, b: week.led_b, ww: week.led_ww, cw: week.led_cw };
+            if (week.led_on) {
+                let off = hours(week.led_off);
+                if (off <= hours(week.led_on)) off += 24; // window over midnight
+                ledWindow = { on: hours(week.led_on), off, onText: week.led_on, offText: week.led_off };
+            }
+            updateCycleLightPreview();
+        }).catch(e => console.error('Failed to load the current schedule:', e));
+        document.getElementById('seasonWeight').addEventListener('input', updateCycleLightPreview);
 
         // Add time slider event listener
         document.getElementById('timeSlider').addEventListener('input', updateCycleLightPreview);

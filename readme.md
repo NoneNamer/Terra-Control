@@ -59,6 +59,8 @@ und ist nur noch in der Git-Historie; für Phase 7 wird die Kamera neu umgesetzt
 | Zielsystem | **64-Bit Raspberry Pi OS** (`aarch64-unknown-linux-gnu`) |
 | Build | **Cross-Compiling für den Pi 3A+ in Docker** (`Dockerfile`), Betrieb als **systemd-Dienst** |
 | Zündpause nach Neustart | Jeder Schaltvorgang von UV1/UV2 wird gespeichert (UTC). War eine Lampe beim Start laut DB noch **an** (Absturz, Stromausfall), gilt die **volle Pause ab Programmstart**. War sie aus, gilt die Restzeit seit dem Ausschalten |
+| Zeitfenster | UV1, UV2 und Wärmespot dürfen **nicht über Mitternacht** laufen (Aus-Zeit vor An-Zeit wird abgelehnt, meist ein Tippfehler). Das LED-Fenster darf über Mitternacht gehen |
+| Weboberfläche | Statische Seiten ohne Build-Schritt, gemeinsame Hilfsfunktionen in `static/api.js`. Der Server sendet `Cache-Control: no-cache`, damit nach einem Update keine alten Seiten aus dem Browser-Cache kommen |
 | Wärmespot-Sperre | Aus, solange kein Messwert vorliegt, der Fühler ausfällt, der letzte Wert älter als 3 Messintervalle ist, ab `overheat_temp` und während der Sperrzeit. Jeder Wert über der Grenze startet die Sperrzeit neu |
 | LED-Treiber | **rpi_ws281x** (über `rs_ws281x`, PWM + DMA auf GPIO18/13). Folge: Programm läuft als root, Analog-Audio aus |
 | Abhängigkeiten | Werden auf aktuelle Versionen gehoben (Axum, base64 …) |
@@ -299,9 +301,13 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 - **Ziel:** Der Wärmespot schaltet nachweisbar sicher
 
 ### Phase 4 – Weboberfläche
-- [ ] API-Routen und Frontend abgleichen (`api.js`, `schedule.html`, `data.html` ↔ `web.rs`; Dashboard und LED-Seite laufen bereits)
-- [ ] Wochenplan-Seite (KW 1–53) fertigstellen, inkl. LED-Zeiten und -Farbe
-- [ ] Eingaben serverseitig prüfen
+- [x] API-Routen und Frontend abgleichen (`api.js` als gemeinsame Schicht, alle Seiten nutzen die aktuelle API)
+- [x] Wochenplan-Seite (KW 1–53) inkl. LED-Zeiten und -Farbe: Übersicht aller Wochen, Editor, Übertragen auf einen KW-Bereich, Zurücksetzen auf den Standard
+- [x] Eingaben serverseitig prüfen (einheitliche JSON-Fehler, Wochen 1–53, Zeiten, Farbwerte, kein UV/Wärme über Mitternacht, Datumsbereiche)
+- [x] Dashboard: Sperrgrund Wärmespot, Zündpause, Systemstatus; im Inbetriebnahme-Modus Schaltflächen für UV1/UV2/Heat
+- [x] LED-Seite: Override-Schalter war vertauscht (behoben), Helligkeitsregler, Vorschau nach dem echten LED-Fenster der Woche
+- [x] Daten-Seite: lesbar im dunklen Design, Messwerte eines Tages als Tabelle
+- [ ] Chart.js wird vom CDN geladen – ohne Internet am Client fehlen nur die Diagramme (ggf. lokal ablegen)
 - **Ziel:** komplett im Browser bedienbar
 
 ### Phase 5 – Deployment

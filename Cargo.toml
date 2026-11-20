@@ -10,7 +10,7 @@ serde = { version = "1.0", features = ["derive"] }                # (De)serializ
 chrono = { version = "0.4", features = ["serde"] }                # Date / time
 toml = "1.2"                                                      # config.toml parser
 axum = "0.8"                                                      # Web framework
-tower-http = { version = "0.7", features = ["fs"] }               # Static file serving
+tower-http = { version = "0.7", features = ["fs", "set-header"] } # Static files, cache header
 sqlx = { version = "0.9", default-features = false, features = [ # SQLite only, no TLS needed
     "runtime-tokio",
     "sqlite",

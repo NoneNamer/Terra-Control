@@ -17,136 +17,156 @@
         </nav><hr>
 
         <h2>Logs and Data</h2>
-        
+
         <div class="data-section">
-            <h3>Recent Log Entries</h3>
-            <div class="log-container">
-                <div id="log-entries" class="log-entries">
-                    <p class="loading">Loading log entries...</p>
-                </div>
-                <div class="log-controls">
-                    <button id="refresh-logs" class="btn">Refresh Logs</button>
-                    <select id="log-filter">
-                        <option value="all">All Entries</option>
-                        <option value="info">Info</option>
-                        <option value="warning">Warnings</option>
-                        <option value="error">Errors</option>
-                    </select>
-                    <input type="number" id="log-limit" min="10" max="500" value="50" placeholder="Limit">
-                </div>
+            <h3>Log Entries</h3>
+            <div class="log-controls">
+                <select id="log-filter" aria-label="Log level">
+                    <option value="all">All entries</option>
+                    <option value="info">Info</option>
+                    <option value="warning">Warnings</option>
+                    <option value="error">Errors</option>
+                </select>
+                <label>Show <input type="number" id="log-limit" min="10" max="1000" value="50"> entries</label>
+                <button id="refresh-logs" class="btn">Refresh</button>
+            </div>
+            <div id="log-entries" class="log-entries">
+                <p class="loading">Loading log entries...</p>
             </div>
         </div>
 
         <div class="data-section">
-            <h3>Download Data</h3>
+            <h3>Readings of a Day</h3>
+            <div class="log-controls">
+                <input type="date" id="day" aria-label="Day">
+                <button id="load-day" class="btn">Show</button>
+            </div>
+            <div class="table-wrapper readings">
+                <table class="schedule-table">
+                    <thead>
+                        <tr><th>Time</th><th>Basking &deg;C</th><th>Cool side &deg;C</th><th>Air &deg;C</th><th>Humidity %</th></tr>
+                    </thead>
+                    <tbody id="day-readings"></tbody>
+                </table>
+            </div>
+            <p id="day-message" class="message"></p>
+        </div>
+
+        <div class="data-section">
+            <h3>Download</h3>
             <div class="download-options">
                 <div class="download-option">
                     <h4>Log Files</h4>
-                    <p>Download system log files</p>
-                    <button id="download-logs" class="btn">Download Logs</button>
+                    <p>All log files plus the database log (zip)</p>
+                    <button id="download-logs" class="btn">Download logs</button>
                 </div>
                 <div class="download-option">
                     <h4>Sensor Data</h4>
-                    <p>Download historical sensor readings</p>
+                    <p>Readings and lamp states as CSV (at most one year)</p>
                     <div class="date-range">
                         <label for="start-date">From:</label>
                         <input type="date" id="start-date">
                         <label for="end-date">To:</label>
                         <input type="date" id="end-date">
                     </div>
-                    <button id="download-sensor-data" class="btn">Download Sensor Data</button>
+                    <button id="download-sensor-data" class="btn">Download CSV</button>
                 </div>
             </div>
+            <p id="download-message" class="message"></p>
         </div>
     </div>
 
     <script src="api.js"></script>
     <script>
+        const isoDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+        async function loadLogEntries() {
+            const container = document.getElementById('log-entries');
+            const filter = document.getElementById('log-filter').value;
+            const limit = document.getElementById('log-limit').value || 50;
+            try {
+                const logs = await API.get(`/logs?filter=${encodeURIComponent(filter)}&limit=${encodeURIComponent(limit)}`);
+                container.innerHTML = '';
+                if (logs.length === 0) {
+                    container.innerHTML = '<p class="no-data">No log entries found.</p>';
+                    return;
+                }
+                for (const log of logs) {
+                    const entry = document.createElement('div');
+                    entry.className = `log-entry ${log.level.toLowerCase()}`;
+                    for (const [cls, text] of [['log-timestamp', log.timestamp], ['log-level', log.level], ['log-message', log.message]]) {
+                        const span = document.createElement('span');
+                        span.className = cls;
+                        span.textContent = text;
+                        entry.appendChild(span);
+                    }
+                    container.appendChild(entry);
+                }
+            } catch (e) {
+                container.innerHTML = '';
+                const p = document.createElement('p');
+                p.className = 'error';
+                p.textContent = `Error loading logs: ${e.message}`;
+                container.appendChild(p);
+            }
+        }
+
+        async function loadDay() {
+            const day = document.getElementById('day').value;
+            const tbody = document.getElementById('day-readings');
+            const msg = document.getElementById('day-message');
+            tbody.innerHTML = '';
+            try {
+                const points = await API.get(`/graph/date/${day}`);
+                for (const p of points) {
+                    const tr = document.createElement('tr');
+                    for (const v of [p.time, fmt(p.temperature), fmt(p.coolZoneTemp), fmt(p.airTemp), fmt(p.humidity)]) {
+                        const td = document.createElement('td');
+                        td.textContent = v;
+                        tr.appendChild(td);
+                    }
+                    tbody.appendChild(tr);
+                }
+                showMessage(msg, points.length ? `${points.length} readings` : 'No readings for this day', points.length ? 'ok' : 'error');
+            } catch (e) {
+                showMessage(msg, e.message, 'error');
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
-            // Set default date range (last 30 days)
             const today = new Date();
-            const thirtyDaysAgo = new Date();
-            thirtyDaysAgo.setDate(today.getDate() - 30);
-            
-            document.getElementById('end-date').valueAsDate = today;
-            document.getElementById('start-date').valueAsDate = thirtyDaysAgo;
-            
-            // Load initial log entries
-            loadLogEntries();
-            
-            // Set up event listeners
+            const monthAgo = new Date();
+            monthAgo.setDate(today.getDate() - 30);
+            document.getElementById('end-date').value = isoDate(today);
+            document.getElementById('start-date').value = isoDate(monthAgo);
+            document.getElementById('day').value = isoDate(today);
+
             document.getElementById('refresh-logs').addEventListener('click', loadLogEntries);
             document.getElementById('log-filter').addEventListener('change', loadLogEntries);
             document.getElementById('log-limit').addEventListener('change', loadLogEntries);
-            document.getElementById('download-logs').addEventListener('click', downloadLogs);
-            document.getElementById('download-sensor-data').addEventListener('click', downloadSensorData);
-        });
-        
-        async function loadLogEntries() {
-            const logContainer = document.getElementById('log-entries');
-            const filter = document.getElementById('log-filter').value;
-            const limit = document.getElementById('log-limit').value;
-            
-            logContainer.innerHTML = '<p class="loading">Loading log entries...</p>';
-            
-            try {
-                const logs = await TerrariumAPI.getLogEntries(filter, limit);
-                
-                if (logs.length === 0) {
-                    logContainer.innerHTML = '<p class="no-data">No log entries found.</p>';
-                    return;
+            document.getElementById('load-day').addEventListener('click', loadDay);
+
+            const downloadMsg = document.getElementById('download-message');
+            document.getElementById('download-logs').addEventListener('click', async () => {
+                try {
+                    await API.download('/logs/download', 'terrarium_logs.zip');
+                } catch (e) {
+                    showMessage(downloadMsg, `Download failed: ${e.message}`, 'error');
                 }
-                
-                logContainer.innerHTML = '';
-                logs.forEach(log => {
-                    const logEntry = document.createElement('div');
-                    logEntry.className = `log-entry ${log.level.toLowerCase()}`;
-                    
-                    const timestamp = document.createElement('span');
-                    timestamp.className = 'log-timestamp';
-                    timestamp.textContent = new Date(log.timestamp).toLocaleString();
-                    
-                    const level = document.createElement('span');
-                    level.className = 'log-level';
-                    level.textContent = log.level;
-                    
-                    const message = document.createElement('span');
-                    message.className = 'log-message';
-                    message.textContent = log.message;
-                    
-                    logEntry.appendChild(timestamp);
-                    logEntry.appendChild(level);
-                    logEntry.appendChild(message);
-                    logContainer.appendChild(logEntry);
-                });
-            } catch (error) {
-                logContainer.innerHTML = `<p class="error">Error loading logs: ${error.message}</p>`;
-            }
-        }
-        
-        async function downloadLogs() {
-            try {
-                await TerrariumAPI.downloadLogs();
-            } catch (error) {
-                alert(`Error downloading logs: ${error.message}`);
-            }
-        }
-        
-        async function downloadSensorData() {
-            const startDate = document.getElementById('start-date').value;
-            const endDate = document.getElementById('end-date').value;
-            
-            if (!startDate || !endDate) {
-                alert('Please select both start and end dates');
-                return;
-            }
-            
-            try {
-                await TerrariumAPI.downloadSensorData(startDate, endDate);
-            } catch (error) {
-                alert(`Error downloading sensor data: ${error.message}`);
-            }
-        }
+            });
+            document.getElementById('download-sensor-data').addEventListener('click', async () => {
+                const start = document.getElementById('start-date').value;
+                const end = document.getElementById('end-date').value;
+                try {
+                    await API.download(`/data/download?start=${start}&end=${end}`, `terrarium_data_${start}_to_${end}.csv`);
+                } catch (e) {
+                    showMessage(downloadMsg, `Download failed: ${e.message}`, 'error');
+                }
+            });
+
+            loadLogEntries();
+            loadDay();
+        });
     </script>
 </body>
 </html>

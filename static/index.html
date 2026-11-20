@@ -36,11 +36,83 @@
         <p>UV2: <span id="UV2Status">--</span></p>
         <p>Heat: <span id="heatStatus">--</span> <span id="heatBlock"></span></p>
         <p>LEDs: <span id="ledStatus">--</span></p>
-        <br><br><hr>
+
+        <section id="setupPanel" class="led-control-section" hidden>
+            <h3>Setup Mode &ndash; Manual Switching</h3>
+            <p class="hint">The schedule is paused. Overheat protection and the UV re-strike pause stay active.</p>
+            <div class="button-row" id="relayButtons"></div>
+            <p id="setupMessage" class="message"></p>
+        </section>
+        <hr>
+
+        <h2>System</h2>
+        <p class="hint">Calendar week <span id="sysWeek">--</span> &middot; hardware: <span id="sysHardware">--</span>
+            &middot; mode: <span id="sysMode">--</span> &middot; running for <span id="sysUptime">--</span>
+            &middot; last reading: <span id="lastReading">--</span></p>
     </div>
 
-    <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
+    <script src="api.js"></script>
+    <script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'></script>
     <script>
+        // Human-readable reasons why the heat spot is blocked
+        function heatBlockText(block) {
+            if (!block) return '';
+            switch (block.reason) {
+                case 'no_reading': return '(blocked: no basking reading yet)';
+                case 'sensor_fault': return '(blocked: basking sensor failed)';
+                case 'overheat': return `(blocked: OVERHEAT ${fmt(block.temp)} °C)`;
+                case 'cooldown': return `(blocked: overheat cooldown, ${Math.ceil(block.remaining_secs / 60)} min left)`;
+                default: return `(blocked: ${block.reason})`;
+            }
+        }
+
+        function duration(secs) {
+            const d = Math.floor(secs / 86400), h = Math.floor(secs % 86400 / 3600), m = Math.floor(secs % 3600 / 60);
+            return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+        }
+
+        let setupButtonsBuilt = false;
+        async function fetchSystemStatus() {
+            try {
+                const s = await API.get('/system/status');
+                document.getElementById('sysWeek').textContent = s.calendar_week;
+                document.getElementById('sysHardware').textContent = s.hardware;
+                document.getElementById('sysMode').textContent = s.setup_mode ? 'setup (schedule paused)' : 'schedule';
+                document.getElementById('sysUptime').textContent = duration(s.uptime_seconds);
+                const panel = document.getElementById('setupPanel');
+                panel.hidden = !s.setup_mode;
+                if (s.setup_mode && !setupButtonsBuilt) {
+                    buildRelayButtons();
+                    setupButtonsBuilt = true;
+                }
+            } catch (e) {
+                console.error('Error fetching system status:', e);
+            }
+        }
+
+        function buildRelayButtons() {
+            const container = document.getElementById('relayButtons');
+            const msg = document.getElementById('setupMessage');
+            for (const [relay, label] of [['uv1', 'UV1'], ['uv2', 'UV2'], ['heat', 'Heat']]) {
+                for (const on of [true, false]) {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = on ? 'btn' : 'btn secondary';
+                    b.textContent = `${label} ${on ? 'on' : 'off'}`;
+                    b.addEventListener('click', async () => {
+                        try {
+                            await API.post(`/relays/${relay}`, { on });
+                            showMessage(msg, `${label} requested ${on ? 'on' : 'off'}`);
+                            fetchCurrentValues();
+                        } catch (e) {
+                            showMessage(msg, e.message, 'error');
+                        }
+                    });
+                    container.appendChild(b);
+                }
+            }
+        }
+
         // Charts for today and yesterday
         let todayChart, yesterdayChart;
         
@@ -93,15 +165,10 @@
         // Fetch current values from API
         async function fetchCurrentValues() {
             try {
-                const response = await fetch('/api/values');
-                if (!response.ok) {
-                    throw new Error(`HTTP error! Status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                
-                // Sensor values are null when a sensor could not be read
-                const fmt = v => (v === null || v === undefined) ? '--' : v.toFixed(1);
+                const data = await API.get('/values');
+
+                // Sensor values are null when a sensor could not be read (fmt shows "--")
+                document.getElementById('lastReading').textContent = data.timestamp || 'none yet';
                 document.getElementById('baskingTemp').textContent = fmt(data.baskingTemp);
                 document.getElementById('coolZoneTemp').textContent = fmt(data.coolZoneTemp);
                 document.getElementById('airTemp').textContent = fmt(data.airTemp);
@@ -114,8 +181,7 @@
                 document.getElementById('UV2Status').textContent = onOff(data.uv2On) + restrike(data.restrike.uv2);
                 document.getElementById('heatStatus').textContent = onOff(data.heatOn);
                 document.getElementById('ledStatus').textContent = onOff(data.ledOn);
-                document.getElementById('heatBlock').textContent =
-                    data.heatBlock ? `(blocked: ${data.heatBlock.reason})` : '';
+                document.getElementById('heatBlock').textContent = heatBlockText(data.heatBlock);
                 
             } catch (error) {
                 console.error('Error fetching current values:', error);
@@ -196,14 +262,16 @@
 
         // Initial data load
         fetchCurrentValues();
+        fetchSystemStatus();
         fetchTodayGraphData();
         fetchYesterdayGraphData();
 
-        // Set up periodic refresh (every 60 seconds)
+        // Periodic refresh: values every 15 s, chart every 60 s
         setInterval(() => {
             fetchCurrentValues();
-            fetchTodayGraphData();
-        }, 60000);
+            fetchSystemStatus();
+        }, 15000);
+        setInterval(fetchTodayGraphData, 60000);
     </script>
 </body>
 </html>

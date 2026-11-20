@@ -121,6 +121,26 @@ pub struct WeekSchedule {
     pub led_color: Rgbww,
 }
 
+impl WeekSchedule {
+    /// Rules beyond the format: UV and heat must not run over midnight (an "off" time before
+    /// the "on" time is almost always a typo and would heat the terrarium at night).
+    /// The LED window may span midnight.
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, window) in [("uv1", self.uv1), ("uv2", self.uv2), ("heat", self.heat)] {
+            if let Some(w) = window {
+                if w.off < w.on {
+                    return Err(format!(
+                        "{name}: off time {} is before on time {} (UV and heat must not run over midnight)",
+                        w.off.format(TIME_FORMAT),
+                        w.on.format(TIME_FORMAT)
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Schedule row as stored in the database and exchanged with the web API.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ScheduleRow {
@@ -157,7 +177,7 @@ impl ScheduleRow {
         let window = |name: &str, on: &Option<String>, off: &Option<String>| {
             TimeWindow::parse_pair(name, clean(on), clean(off))
         };
-        Ok(WeekSchedule {
+        let schedule = WeekSchedule {
             uv1: window("uv1", &self.uv1_on, &self.uv1_off)?,
             uv2: window("uv2", &self.uv2_on, &self.uv2_off)?,
             heat: window("heat", &self.heat_on, &self.heat_off)?,
@@ -169,7 +189,9 @@ impl ScheduleRow {
                 ww: channel("led_ww", self.led_ww)?,
                 cw: channel("led_cw", self.led_cw)?,
             },
-        })
+        };
+        schedule.validate()?;
+        Ok(schedule)
     }
 
     pub fn from_week_schedule(week: i64, s: &WeekSchedule) -> Self {
@@ -353,5 +375,25 @@ mod tests {
         assert_eq!(a.scaled(0), Rgbww::OFF);
         assert_eq!(a.scaled(50), Rgbww { r: 0, g: 50, b: 100, ww: 128, cw: 5 });
         assert_eq!(a.scaled(200), a, "brightness is capped at 100 %");
+    }
+
+    #[test]
+    fn uv_and_heat_must_not_run_over_midnight() {
+        let mut r = row();
+        r.heat_on = Some("19:00".into());
+        r.heat_off = Some("06:30".into());
+        let err = r.to_week_schedule().unwrap_err();
+        assert!(err.contains("heat"), "{err}");
+
+        let mut r = row();
+        r.uv1_on = Some("22:00".into());
+        r.uv1_off = Some("02:00".into());
+        assert!(r.to_week_schedule().is_err());
+
+        // A night light over midnight is fine for the LEDs
+        let mut r = row();
+        r.led_on = Some("22:00".into());
+        r.led_off = Some("02:00".into());
+        assert!(r.to_week_schedule().is_ok());
     }
 }
