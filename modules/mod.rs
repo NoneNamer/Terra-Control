@@ -1,10 +1,9 @@
 pub mod config;
+pub mod gpio;
 pub mod getData;
 pub mod lightControl;
 pub mod ledStrip;
 pub mod web;
-pub mod display;
-pub mod cam;
 pub mod storage;
 pub mod models;
 pub mod logs;

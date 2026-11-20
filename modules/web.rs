@@ -17,7 +17,6 @@ use crate::modules::lightControl::LightController;
 use crate::modules::ledStrip::LEDController;
 use crate::modules::getData::{CurrentReadings, get_current_readings, get_overheat_status};
 use crate::modules::logs;
-use crate::modules::cam::{CameraService, CameraError};
 use chrono::{DateTime, Utc, NaiveDateTime, NaiveDate, NaiveTime};
 use std::fs::File;
 use std::io::Read;
@@ -76,7 +75,6 @@ pub fn map_db_error<E: std::fmt::Display>(err: E) -> ApiError {
 /// - Hardware controllers (light, relay, LED)
 /// - Current sensor readings
 /// - Application configuration
-/// - Camera service
 ///
 /// It's used with Axum's State extractor to provide handlers access to these resources.
 pub struct AppState {
@@ -86,7 +84,6 @@ pub struct AppState {
     led_controller: Arc<Mutex<LEDController>>,
     current_readings: Arc<Mutex<CurrentReadings>>,
     config: Arc<Config>,
-    camera_service: Arc<CameraService>,
 }
 
 // Helper methods for AppState
@@ -147,14 +144,6 @@ impl AppState {
             .await
             .map_err(map_db_error)
     }
-    
-    /// Execute a function with the camera service
-    pub async fn with_camera<F, R, E>(&self, f: F) -> Result<R, E> 
-    where
-        F: FnOnce(&CameraService) -> Result<R, E>,
-    {
-        f(&self.camera_service)
-    }
 }
 
 // ===== Module Organization =====
@@ -164,14 +153,12 @@ mod handlers {
     pub mod led;
     pub mod monitoring;
     pub mod system;
-    pub mod camera;
 }
 
 use handlers::schedule::*;
 use handlers::led::*;
 use handlers::monitoring::*;
 use handlers::system::*;
-use handlers::camera::*;
 
 /// Creates the main application router with all API endpoints.
 ///
@@ -180,7 +167,6 @@ use handlers::camera::*;
 /// - Schedule management
 /// - System monitoring and status
 /// - Sensor data access
-/// - Camera stream management
 ///
 /// It also configures static file serving for the web UI and sets up
 /// CORS headers to allow browser access.
@@ -193,7 +179,6 @@ use handlers::camera::*;
 /// * `led_controller` - Reference to the LED controller
 /// * `current_readings` - Shared state for current sensor readings
 /// * `config` - Application configuration
-/// * `camera_service` - Camera service for snapshots and streaming
 ///
 /// # Returns
 ///
@@ -205,7 +190,6 @@ pub async fn create_router(
     led_controller: Arc<Mutex<LEDController>>,
     current_readings: Arc<Mutex<CurrentReadings>>,
     config: Arc<Config>,
-    camera_service: Arc<CameraService>,
 ) -> Router {
     let state = AppState {
         db_pool: Arc::new(db_pool.clone()),
@@ -214,7 +198,6 @@ pub async fn create_router(
         led_controller,
         current_readings,
         config,
-        camera_service,
     };
 
     Router::new()
@@ -222,7 +205,6 @@ pub async fn create_router(
         .merge(led_routes())
         .merge(monitoring_routes())
         .merge(system_routes())
-        .merge(camera_routes())
         .fallback(handle_not_found)
         .with_state(state)
 }
@@ -275,14 +257,6 @@ fn system_routes() -> Router {
         .route("/api/system/status", get(get_system_status))
         .route("/api/logs", get(get_logs))
         .route("/api/logs/download", get(download_logs))
-}
-
-/// Camera streaming routes
-fn camera_routes() -> Router {
-    Router::new()
-        .route("/api/camera/status", get(get_camera_status))
-        .route("/api/camera/snapshot", get(get_camera_snapshot))
-        .route("/api/camera/stream", get(get_camera_stream_url))
 }
 
 // ===== Handler Modules =====
@@ -753,111 +727,6 @@ pub mod handlers {
                 )
                 .body(Body::from(String::new()))
                 .unwrap())
-        }
-    }
-
-    // Camera handlers module
-    pub mod camera {
-        use super::*;
-        
-        #[derive(Serialize)]
-        pub struct CameraStreamResponse {
-            pub stream_url: String,
-        }
-        
-        #[derive(Serialize)]
-        pub struct CameraStatusResponse {
-            pub camera_available: bool,
-            pub camera_initialized: bool,
-            pub stream_url: Option<String>,
-        }
-        
-        /// Get camera status
-        pub async fn get_camera_status(
-            State(state): State<AppState>,
-        ) -> ApiResult<CameraStatusResponse> {
-            // Check camera availability using the static method
-            let camera_available = CameraService::is_camera_available();
-            
-            // Use the helper method to check if camera is initialized
-            let camera_initialized = state.with_camera(|camera| {
-                camera.is_initialized()
-            }).await;
-            
-            // Build the stream URL only if camera is available and initialized
-            let stream_url = if camera_available && camera_initialized {
-                Some(format!("http://{}:{}/stream", 
-                    state.config().web.address, 
-                    state.config().web.camera_port.unwrap_or(3030)))
-            } else {
-                None
-            };
-            
-            success(CameraStatusResponse {
-                camera_available,
-                camera_initialized,
-                stream_url,
-            })
-        }
-        
-        /// Get camera stream URL
-        pub async fn get_camera_stream_url(
-            State(state): State<AppState>,
-        ) -> ApiResult<CameraStreamResponse> {
-            // Check if camera is available
-            if !CameraService::is_camera_available() {
-                return Err(ApiError::NotFound("Camera is not available".to_string()));
-            }
-            
-            // Use the helper method to check if camera is initialized
-            let camera_initialized = state.with_camera(|camera| {
-                camera.is_initialized()
-            }).await;
-            
-            if !camera_initialized {
-                return Err(ApiError::InternalError("Camera is not initialized".to_string()));
-            }
-            
-            // Get the configured camera stream URL from config
-            let stream_url = format!("http://{}:{}/stream", 
-                state.config().web.address, 
-                state.config().web.camera_port.unwrap_or(3030));
-                
-            success(CameraStreamResponse {
-                stream_url,
-            })
-        }
-        
-        /// Get a snapshot from the camera
-        pub async fn get_camera_snapshot(
-            State(state): State<AppState>,
-        ) -> Result<impl IntoResponse, ApiError> {
-            // Check if camera is available
-            if !CameraService::is_camera_available() {
-                return Err(ApiError::NotFound("Camera is not available".to_string()));
-            }
-            
-            // Use the helper method to check if camera is initialized
-            let camera_initialized = state.with_camera(|camera| {
-                camera.is_initialized()
-            }).await;
-            
-            if !camera_initialized {
-                return Err(ApiError::InternalError("Camera is not initialized".to_string()));
-            }
-            
-            // Use the helper method to take a snapshot
-            let jpeg_data = state.with_camera(|camera| {
-                camera.take_snapshot()
-            }).await
-                .map_err(|e| ApiError::InternalError(format!("Failed to take camera snapshot: {}", e)))?;
-            
-            // Return the image data with correct MIME type
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "image/jpeg")
-                .body(Body::from(jpeg_data))
-                .map_err(|e| ApiError::InternalError(format!("Failed to create response: {}", e)))?)
         }
     }
 }

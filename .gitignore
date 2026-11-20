@@ -1,6 +1,8 @@
 target/
 logs/
+temp/
 Dockerfile
 *.log
 .dockerignore
-Cargo.lock
+data.db
+data.db-*

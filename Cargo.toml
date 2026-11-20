@@ -1,0 +1,33 @@
+[package]
+name = "terrarium_controller"
+version = "0.1.0"
+edition = "2021"
+authors = ["Michael Schnieders"]
+
+[dependencies]
+tokio = { version = "1.54", features = ["full"] }                 # Async runtime
+serde = { version = "1.0", features = ["derive"] }                # (De)serialization
+chrono = { version = "0.4", features = ["serde"] }                # Date / time
+toml = "1.2"                                                      # config.toml parser
+axum = "0.8"                                                      # Web framework
+tower = "0.5"                                                     # Middleware
+tower-http = { version = "0.7", features = ["fs"] }               # Static file serving
+sqlx = { version = "0.9", default-features = false, features = [ # SQLite only, no TLS needed
+    "runtime-tokio",
+    "sqlite",
+    "chrono",
+    "macros",
+    "migrate",
+] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] } # Log download as zip (pure Rust)
+futures = "0.3"                                                   # Async primitives
+log = "0.4"                                                       # Logging facade
+
+# Hardware access only exists on the Pi (Linux). Phase 1 puts it behind a
+# hardware trait with a simulation backend for Windows.
+[target.'cfg(target_os = "linux")'.dependencies]
+rppal = "0.22"                                                    # GPIO / I2C / PWM
+
+[[bin]]
+name = "terra-control"
+path = "main.rs"
