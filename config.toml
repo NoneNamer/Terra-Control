@@ -82,8 +82,8 @@ port = 80
 static_dir = "static"
 
 [storage]
+# Readings and logs are kept forever for now (no automatic cleanup)
 database = "sqlite:data.db"
-storage_days = 30                 # data cleanup (phase 5)
 
 # Used for every calendar week without its own schedule row.
 # Leave a time pair out to keep that load off all day.

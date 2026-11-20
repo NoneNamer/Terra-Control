@@ -42,7 +42,12 @@ cargo test <test_name>      # single test
 ```
 
 - The binary reads `config.toml` and creates `data.db`, `logs/`, `temp/` relative to the **working
-  directory**, so run it from this folder.
+  directory**, so run it from this folder. On the Pi it runs as systemd service `terrarium.service`
+  from `/opt/terrarium` (`deploy/install.sh` installs/updates it and never overwrites an existing
+  `config.toml` or the database). `Config` uses `deny_unknown_fields`: renaming or removing a key
+  breaks existing installations, so mention it in the commit / readme.
+- Decided: no automatic deletion of readings or logs for now (the user asked to keep everything).
+- `.gitattributes` forces LF for `*.sh`, `*.service` and `Dockerfile` (they run on Linux).
 - SQL uses runtime-checked `sqlx::query`/`query_as::<_, T>` (decided: no `query!` macros, so no
   `DATABASE_URL` is needed). Schema changes go into a new file in `migrations/`; `sqlx::migrate!`
   embeds them and they run on startup. Never edit an applied migration.

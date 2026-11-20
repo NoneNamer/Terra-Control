@@ -1,0 +1,35 @@
+[Unit]
+Description=Terrarium controller (lamps, LEDs, sensors, web interface)
+Documentation=file:///opt/terrarium/readme.md
+# Local file systems must be mounted; the clock comes from the DS3231 (udev, early in boot).
+# No network dependency: the controller must run even without (Wi-Fi) network.
+After=local-fs.target time-sync.target
+
+# Give up only after many fast crashes in a row (StartLimitBurst within StartLimitIntervalSec)
+StartLimitIntervalSec=600
+StartLimitBurst=20
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/terrarium
+ExecStart=/opt/terrarium/terra-control
+# root is required: rpi_ws281x uses /dev/mem for the LED strips, and port 80 is privileged
+User=root
+
+# Restart after crashes and after a clean exit caused by an error. The UV re-strike pause is
+# restored from the database, so restarts are safe for the lamps.
+Restart=always
+RestartSec=10
+
+# SIGTERM -> the program switches all outputs off and stores the UV state before exiting
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Light hardening that does not interfere with GPIO, /dev/mem, I2C or 1-Wire
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

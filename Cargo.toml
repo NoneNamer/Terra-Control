@@ -31,3 +31,6 @@ rs_ws281x = "0.5"                                                 # WS2805 outpu
 [[bin]]
 name = "terra-control"
 path = "main.rs"
+
+[profile.release]
+strip = true                                                      # no debug symbols on the Pi

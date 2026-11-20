@@ -122,7 +122,6 @@ pub struct WebConfig {
 #[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     pub database: String,
-    pub storage_days: u32,
 }
 
 /// Schedule used for weeks without their own database row.
@@ -259,9 +258,6 @@ impl Config {
         }
         if self.web.port == 0 {
             bail!("web.port must not be 0");
-        }
-        if self.storage.storage_days == 0 {
-            bail!("storage.storage_days must be at least 1");
         }
 
         if let Err(e) = self.schedule_default.to_week_schedule() {

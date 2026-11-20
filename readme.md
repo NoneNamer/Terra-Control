@@ -131,7 +131,7 @@ angesprochen (bis zur Verkabelung Platzhalter).
 
 ## Raspberry Pi einrichten (64-Bit Raspberry Pi OS)
 
-### Programm bauen und kopieren
+### Installieren und aktualisieren
 
 Gebaut wird am PC in Docker (Cross-Compiling für `aarch64`):
 
@@ -139,21 +139,35 @@ Gebaut wird am PC in Docker (Cross-Compiling für `aarch64`):
 docker build --output dist .
 ```
 
-Danach liegt das Programm in `dist/terra-control`. Auf den Pi gehören drei Dinge in einen Ordner,
-z. B. `/opt/terrarium`: `terra-control`, `config.toml` und der Ordner `static/`.
+Dann die Dateien in einen Ordner auf dem Pi kopieren und dort das Installationsskript ausführen:
 
 ```bash
-scp -r dist/terra-control config.toml static <user>@<pi-ip>:/opt/terrarium/
+scp -r dist/terra-control config.toml static deploy readme.md <user>@<pi-ip>:~/terrarium/
+ssh <user>@<pi-ip> sudo sh terrarium/deploy/install.sh
 ```
 
-Das Programm muss als **root** laufen: Der LED-Treiber (rpi_ws281x) braucht `/dev/mem`, und Port 80
-ist ein privilegierter Port.
+Das Skript (`deploy/install.sh`):
+- stoppt einen laufenden Dienst (alle Ausgänge aus, UV-Zustand wird gespeichert),
+- kopiert Programm, `static/` und readme nach `/opt/terrarium`,
+- legt `config.toml` nur bei der **Erstinstallation** an. Eine vorhandene Konfiguration bleibt
+  erhalten; weicht die mitgelieferte Vorlage ab, liegt sie daneben als `config.toml.new`,
+- installiert und startet den systemd-Dienst `terrarium.service` (`deploy/terrarium.service`).
+
+Der Dienst läuft als **root** (rpi_ws281x braucht `/dev/mem`, Port 80 ist privilegiert), startet
+beim Booten und nach einem Absturz nach 10 s neu. Beim Stoppen schaltet das Programm alle Ausgänge
+aus. Die Datenbank `data.db` und `logs/` liegen in `/opt/terrarium`.
 
 ```bash
-cd /opt/terrarium && sudo ./terra-control
+sudo systemctl status terrarium      # Zustand
+journalctl -u terrarium -f           # laufende Ausgabe
+sudo systemctl restart terrarium     # nach Änderungen an /opt/terrarium/config.toml
 ```
 
-`data.db`, `logs/` und `temp/` entstehen im aktuellen Ordner. Ein systemd-Dienst folgt in Phase 5.
+**Zeitzone:** Der Wochenplan arbeitet mit Ortszeit. Einmalig setzen:
+`sudo timedatectl set-timezone Europe/Berlin`
+
+**Aufbewahrung:** Messwerte und Logs werden vorerst **nicht automatisch gelöscht** (ca. 50 MB
+Messwerte pro Jahr). Die Ausgabe im systemd-Journal begrenzt journald selbst.
 
 ### `/boot/firmware/config.txt`
 
@@ -181,7 +195,8 @@ SPI muss nicht aktiviert werden (J7 bzw. das W5500 wird in v1 nicht genutzt). Da
 
 ### Erster Test mit echter Hardware
 
-In `config.toml`: `simulate = false` und `setup_mode = true`. Im Inbetriebnahme-Modus schaltet der
+In `/opt/terrarium/config.toml`: `simulate = false` und `setup_mode = true`, danach
+`sudo systemctl restart terrarium`. Im Inbetriebnahme-Modus schaltet der
 Zeitplan nichts; die Lampen lassen sich nur per API schalten, der Überhitzungsschutz bleibt aktiv.
 Für die ersten Tests die 230-V-Lasten abklemmen.
 
@@ -232,6 +247,7 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 ├── config.toml          # Konfiguration
 ├── Cargo.toml           # Abhängigkeiten
 ├── Dockerfile           # Cross-Compiling für den Pi (aarch64), Ausgabe nach dist/
+├── deploy/              # install.sh und terrarium.service (systemd)
 ├── migrations/          # SQLite-Schema (sqlx-Migrationen, beim Start automatisch angewendet)
 ├── modules/
 │   ├── mod.rs           # Modul-Einstieg
@@ -312,8 +328,11 @@ Diese Werte dienen als Standard für `config.toml`, für die Wochenplan-Vorlage 
 
 ### Phase 5 – Deployment
 - [x] Dockerfile zum Cross-Compiling für den Pi 3A+ (in Phase 2 vorgezogen)
-- [ ] systemd-Dienst mit automatischem Neustart
-- [ ] Log-Rotation / Datenbereinigung (`storage_days`)
+- [x] systemd-Dienst mit automatischem Neustart (`deploy/terrarium.service`), Installations-/Update-Skript (`deploy/install.sh`)
+- [x] Sauberes Beenden per SIGTERM getestet (echtes aarch64-Binary, emuliert in Docker); Unit mit `systemd-analyze verify`, Skript mit `shellcheck` geprüft
+- [x] Release-Build ohne Debug-Symbole (6,3 MB)
+- [x] Datenbereinigung: **vorerst bewusst keine** – Messwerte und Logs bleiben erhalten (`storage_days` entfernt)
+- [ ] Am Pi: Dienst installieren, Neustart des Pi und Stromausfall durchspielen
 - **Ziel:** läuft dauerhaft auf dem Pi
 
 ### Phase 6 – Hardware & Inbetriebnahme
